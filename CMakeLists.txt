@@ -1,3 +1,19 @@
+# == DO NOT EDIT THE FOLLOWING LINES for the Raspberry Pi Pico VS Code Extension to work ==
+if(WIN32)
+    set(USERHOME $ENV{USERPROFILE})
+else()
+    set(USERHOME $ENV{HOME})
+endif()
+set(sdkVersion 2.1.1)
+set(toolchainVersion 14_2_Rel1)
+set(picotoolVersion 2.1.1)
+set(picoVscode ${USERHOME}/.pico-sdk/cmake/pico-vscode.cmake)
+if (EXISTS ${picoVscode})
+    include(${picoVscode})
+endif()
+# ====================================================================================
+set(PICO_BOARD pico2 CACHE STRING "Board type")
+
 cmake_minimum_required(VERSION 3.13)
 include(pico_sdk_import.cmake)
 
@@ -53,13 +69,15 @@ message(STATUS "")
 
 add_executable(${PROJECT_NAME} ${SRC})
 
-pico_define_boot_stage2(slower_boot2 ${PICO_DEFAULT_BOOT_STAGE2_FILE})
-target_compile_definitions(slower_boot2 PRIVATE PICO_FLASH_SPI_CLKDIV=4)
-pico_set_boot_stage2(${PROJECT_NAME} slower_boot2)
-
-
-set(FAMILY rp2040)
-set(BOARD pico_sdk)
+if( ${PICO_BOARD} MATCHES "pico2" )
+#	pico_set_linker_script(${PROJECT_NAME} "${CMAKE_SOURCE_DIR}/memmap.ld")
+	SET(BUILD_NAME "m1p2-${PROJECT_NAME}")
+else()
+	pico_define_boot_stage2(slower_boot2 ${PICO_DEFAULT_BOOT_STAGE2_FILE})
+	target_compile_definitions(slower_boot2 PRIVATE PICO_FLASH_SPI_CLKDIV=4)
+	pico_set_boot_stage2(${PROJECT_NAME} slower_boot2)
+	SET(BUILD_NAME "m1p1-${PROJECT_NAME}")
+endif()
 
 pico_set_program_name(wonderswan "Wonderswan emulator by xrip for MURMULATOR devboard")
 pico_set_program_version(wonderswan "develop")

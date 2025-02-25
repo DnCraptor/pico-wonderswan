@@ -42,7 +42,7 @@ static int visible_line_size = 320;
 static int dma_chan_ctrl;
 static int dma_chan;
 
-static uint8_t* graphics_buffer;
+static volatile uint8_t* graphics_buffer;
 uint8_t* text_buffer = NULL;
 static uint graphics_buffer_width = 0;
 static uint graphics_buffer_height = 0;
@@ -73,7 +73,7 @@ void __time_critical_func() dma_handler_VGA() {
     dma_hw->ints0 = 1u << dma_chan_ctrl;
     static uint32_t frame_number = 0;
     static uint32_t screen_line = 0;
-    static uint8_t* input_buffer = NULL;
+    static volatile uint8_t* input_buffer = NULL;
     screen_line++;
 
     if (screen_line == N_lines_total) {
@@ -206,7 +206,7 @@ void __time_critical_func() dma_handler_VGA() {
     // uint8_t* vbuf8=vbuf+(line*g_buf_width/2); //4bit buf
     //uint8_t* vbuf8=vbuf+(line*g_buf_width/4); //2bit buf
     //uint8_t* vbuf8=vbuf+((line&1)*8192+(line>>1)*g_buf_width/4);
-    uint8_t* input_buffer_8bit = input_buffer + y / 2 * 80 + (y & 1) * 8192;
+    uint8_t* input_buffer_8bit = (uint8_t*)( input_buffer + y / 2 * 80 + (y & 1) * 8192);
 
     //output_buffer = &lines_pattern[2 + ((line_number) & 1)];
 
@@ -284,7 +284,7 @@ void __time_critical_func() dma_handler_VGA() {
             break;
         case TGA_320x200x16:
             //4bit buf
-            input_buffer_8bit = input_buffer + (y & 3) * 8192 + y / 4 * 160;
+            input_buffer_8bit = (uint8_t*)input_buffer + (y & 3) * 8192 + y / 4 * 160;
             for (int x = width / 2; x--;) {
                 *output_buffer_16bit++ = current_palette[*input_buffer_8bit >> 4 & 15];
                 *output_buffer_16bit++ = current_palette[*input_buffer_8bit & 15];
@@ -292,7 +292,7 @@ void __time_critical_func() dma_handler_VGA() {
             }
             break;
         case EGA_320x200x16x4: {
-            input_buffer_8bit = input_buffer + y * 40;
+            input_buffer_8bit = (uint8_t*)input_buffer + y * 40;
             for (int x = 0; x < 40; x++) {
                 for (int bit = 7; bit--;) {
                     uint8_t color = *input_buffer_8bit >> bit & 1;
@@ -307,7 +307,7 @@ void __time_critical_func() dma_handler_VGA() {
         }
         // Это только для sega
         case GRAPHICSMODE_DEFAULT:
-            input_buffer_8bit = input_buffer + y * width;
+            input_buffer_8bit = (uint8_t*)input_buffer + y * width;
             for (int i = width; i--;) {
                 *output_buffer_16bit++ = current_palette[*input_buffer_8bit++];
             }
@@ -331,7 +331,7 @@ void graphics_set_mode(enum graphics_mode_t mode) {
             text_buffer_width = 80;
             text_buffer_height = 30;
     }
-    memset(graphics_buffer, 0, graphics_buffer_height * graphics_buffer_width);
+    memset((uint8_t*)graphics_buffer, 0, graphics_buffer_height * graphics_buffer_width);
     if (_SM_VGA < 0) return; // если  VGA не инициализирована -
 
     graphics_mode = mode;

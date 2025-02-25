@@ -13,7 +13,7 @@
 #include "hardware/pio.h"
 #include "hardware/gpio.h"
 #include <functional>
-
+#include "hid.h"
 
 typedef struct {
   uint8_t code;
