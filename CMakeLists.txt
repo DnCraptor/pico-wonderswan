@@ -34,9 +34,9 @@ option(I2S_CS4334 "Enable I2S CS4334 sound" OFF)
 option(VGA "Enable VGA" OFF)
 option(TFT "Enable TFT display" OFF)
 option(ILI9341 "Enable TFT ILI9341 display" OFF)
-option(HDMI "Enable HDMI display" ON)
+option(HDMI "Enable HDMI display" OFF)
 option(TV "Enable TV composite output" OFF)
-option(SOFTTV "Enable TV soft composite output" OFF)
+option(SOFTTV "Enable TV soft composite output" ON)
 
 
 set(CMAKE_C_STANDARD 11)
