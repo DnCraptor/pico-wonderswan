@@ -15,14 +15,15 @@ endif()
 set(PICO_BOARD pico2 CACHE STRING "Board type")
 
 cmake_minimum_required(VERSION 3.13)
+set(BUILD_VERSION "1.0.0")
 include(pico_sdk_import.cmake)
 
 project(wonderswan C CXX ASM)
 SET(BUILD_NAME "${PROJECT_NAME}")
 
-option(I2S "Enable I2S sound" OFF)
+option(I2S "Enable I2S sound" ON)
 option(I2S_CS4334 "Enable I2S CS4334 sound" OFF)
-option(VGA "Enable VGA" OFF)
+option(VGA "Enable VGA" ON)
 option(TFT "Enable TFT display" OFF)
 option(ILI9341 "Enable TFT ILI9341 display" OFF)
 option(HDMI "Enable HDMI display" OFF)
@@ -80,7 +81,7 @@ else()
 endif()
 
 pico_set_program_name(wonderswan "Wonderswan emulator by xrip for MURMULATOR devboard")
-pico_set_program_version(wonderswan "develop")
+pico_set_program_version(wonderswan ${BUILD_VERSION})
 
 #include_directories()
 include_directories(${PROJECT_NAME} PRIVATE src src/oswan)
@@ -116,14 +117,15 @@ ENDIF()
 
 IF(NOT I2S)
 	target_compile_definitions(${PROJECT_NAME} PRIVATE AUDIO_PWM_PIN=26)
+	SET(BUILD_NAME "${BUILD_NAME}-PWM")
 ELSEIF(I2S_CS4334)
 	target_compile_definitions(${PROJECT_NAME} PRIVATE I2S_CS4334)
 	SET(BUILD_NAME "${BUILD_NAME}-I2S-CS4334")
 ELSE()
-	SET(BUILD_NAME "${BUILD_NAME}-I2S-TDA1387")
+	SET(BUILD_NAME "${BUILD_NAME}-I2S")
 ENDIF()
 
-set_target_properties(${PROJECT_NAME} PROPERTIES OUTPUT_NAME "${BUILD_NAME}")
+set_target_properties(${PROJECT_NAME} PROPERTIES OUTPUT_NAME "${BUILD_NAME}-${BUILD_VERSION}")
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
 		graphics
