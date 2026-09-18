@@ -134,6 +134,17 @@ uint8_t cpu_readport(uint8_t port) {
     int w1, w2;
 
     switch (port) {
+        case 0x4a:
+        case 0x4b:
+        case 0x4c:
+        case 0x4d:
+        case 0x4e:
+        case 0x4f:
+        case 0x50:
+        case 0x51:
+        case 0x52:
+        case 0x53:
+            return ws_audio_dma_port_read(port);
         case 0x80:
         case 0x81:
         case 0x82:
@@ -293,12 +304,24 @@ uint8_t cpu_readport(uint8_t port) {
 void cpu_writeport(uint32_t port, uint8_t value) {
     int w1;
 
-    if (ws_ioRam[port] == value)
+    if (ws_ioRam[port] == value && port != 0x52)
         return;
 
     ws_ioRam[port] = value;
 
     switch (port) {
+        case 0x4a:
+        case 0x4b:
+        case 0x4c:
+        case 0x4d:
+        case 0x4e:
+        case 0x4f:
+        case 0x50:
+        case 0x51:
+        case 0x52:
+        case 0x53:
+            ws_audio_dma_port_write(port, value);
+            break;
         case 0x80:
         case 0x81:
         case 0x82:

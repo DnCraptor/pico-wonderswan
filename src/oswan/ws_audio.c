@@ -27,6 +27,42 @@ static uint32 sample_accum;
 static int16 pcm[WS_AUDIO_BLOCK * 2];
 static uint16 pcm_frames;
 
+/* WonderSwan Color sound DMA (ports 4Ah..52h). The hardware clocks one
+ * byte at 4/6/12/24 kHz from the 3.072 MHz CPU domain. */
+static uint32 sound_dma_source;
+static uint32 sound_dma_source_reload;
+static uint32 sound_dma_size;
+static uint32 sound_dma_size_reload;
+static uint8 sound_dma_control;
+static int32 sound_dma_counter;
+
+static const uint16 sound_dma_period[4] = { 768, 512, 256, 128 };
+
+static void sound_dma_tick(void) {
+    if (!(sound_dma_control & 0x80)) return;
+    if (sound_dma_control & 0x04) {
+        if (!(sound_dma_control & 0x10)) ws_audio_port_write(0x89, 0);
+        return;
+    }
+    if (!sound_dma_size) {
+        sound_dma_control &= 0x7f;
+        return;
+    }
+    const uint8 sample = cpu_readmem20(sound_dma_source);
+    /* Target 0 is channel 2 voice mode. Hyper voice is not in stage-1 APU. */
+    if (!(sound_dma_control & 0x10)) ws_audio_port_write(0x89, sample);
+    sound_dma_size--;
+    sound_dma_source = (sound_dma_source + ((sound_dma_control & 0x40) ? 0xfffffu : 1u)) & 0xfffffu;
+    if (!sound_dma_size) {
+        if (sound_dma_control & 0x08) {
+            sound_dma_source = sound_dma_source_reload;
+            sound_dma_size = sound_dma_size_reload;
+        } else {
+            sound_dma_control &= 0x7f;
+        }
+    }
+}
+
 static int16 clamp16(int32 v) {
     if (v > 32767) return 32767;
     if (v < -32768) return -32768;
@@ -139,10 +175,22 @@ void ws_audio_reset(void) {
     sweep_counter = 1;
     sample_accum = 0;
     pcm_frames = 0;
+    sound_dma_source = sound_dma_source_reload = 0;
+    sound_dma_size = sound_dma_size_reload = 0;
+    sound_dma_control = 0;
+    sound_dma_counter = 0;
     for (unsigned ch = 0; ch < 4; ++ch) period_counter[ch] = 1;
 }
 
 void ws_audio_process(uint32 cycles) {
+    if (sound_dma_control & 0x80) {
+        sound_dma_counter -= (int32)cycles;
+        while (sound_dma_counter <= 0 && (sound_dma_control & 0x80)) {
+            sound_dma_tick();
+            sound_dma_counter += sound_dma_period[sound_dma_control & 3];
+        }
+    }
+
     for (unsigned ch = 0; ch < 4; ++ch)
         advance_channel(ch, cycles);
 
@@ -150,6 +198,57 @@ void ws_audio_process(uint32 cycles) {
     while (sample_accum >= WS_AUDIO_CLOCK) {
         sample_accum -= WS_AUDIO_CLOCK;
         emit_sample();
+    }
+}
+
+uint8 ws_audio_dma_port_read(uint32 port) {
+    switch (port) {
+        case 0x4a: return (uint8)sound_dma_source;
+        case 0x4b: return (uint8)(sound_dma_source >> 8);
+        case 0x4c: return (uint8)(sound_dma_source >> 16);
+        case 0x4d: return 0;
+        case 0x4e: return (uint8)sound_dma_size;
+        case 0x4f: return (uint8)(sound_dma_size >> 8);
+        case 0x50: return (uint8)(sound_dma_size >> 16);
+        case 0x51: return 0;
+        case 0x52: return sound_dma_control;
+        case 0x53: return 0;
+        default: return 0xff;
+    }
+}
+
+void ws_audio_dma_port_write(uint32 port, uint8 value) {
+    switch (port) {
+        case 0x4a:
+            sound_dma_source = (sound_dma_source & 0x0fff00u) | value;
+            sound_dma_source_reload = (sound_dma_source_reload & 0x0fff00u) | value;
+            break;
+        case 0x4b:
+            sound_dma_source = (sound_dma_source & 0x0f00ffu) | ((uint32)value << 8);
+            sound_dma_source_reload = (sound_dma_source_reload & 0x0f00ffu) | ((uint32)value << 8);
+            break;
+        case 0x4c:
+            sound_dma_source = (sound_dma_source & 0x00ffffu) | ((uint32)(value & 0x0f) << 16);
+            sound_dma_source_reload = (sound_dma_source_reload & 0x00ffffu) | ((uint32)(value & 0x0f) << 16);
+            break;
+        case 0x4e:
+            sound_dma_size = (sound_dma_size & 0x0fff00u) | value;
+            sound_dma_size_reload = (sound_dma_size_reload & 0x0fff00u) | value;
+            break;
+        case 0x4f:
+            sound_dma_size = (sound_dma_size & 0x0f00ffu) | ((uint32)value << 8);
+            sound_dma_size_reload = (sound_dma_size_reload & 0x0f00ffu) | ((uint32)value << 8);
+            break;
+        case 0x50:
+            sound_dma_size = (sound_dma_size & 0x00ffffu) | ((uint32)(value & 0x0f) << 16);
+            sound_dma_size_reload = (sound_dma_size_reload & 0x00ffffu) | ((uint32)(value & 0x0f) << 16);
+            break;
+        case 0x52:
+            sound_dma_control = value;
+            if (value & 0x80) sound_dma_counter = sound_dma_period[value & 3];
+            break;
+        default:
+            break;
     }
 }
 

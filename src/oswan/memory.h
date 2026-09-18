@@ -22,6 +22,8 @@ extern uint8	internalRam[64 << 10];
 //extern uint8	externalEeprom[128 << 10];
 #endif
 
+uint8 cpu_readmem20(uint32 addr);
+
 void	ws_memory_init(uint8 *rom, uint32 romSize);
 void	ws_memory_reset(void);
 uint8	*memory_getRom(void);
