@@ -22,6 +22,7 @@
 #include "memory.h"
 #include "gpu.h"
 #include "ws.h"
+#include "ws_audio.h"
 
 
 //#define DEBUG
@@ -115,7 +116,7 @@ int ws_init(uint8  *rom, size_t romSize)
 // TODO: Move patches to filebrowser_read
     //	ws_patchRom();
 	ws_io_init();
-//	ws_audio_init();
+	ws_audio_init();
 	ws_gpu_init();
 
 	if (ws_rotated())
@@ -138,7 +139,7 @@ void ws_reset(void)
 {
 	ws_memory_reset();
 	ws_io_reset();
-//	ws_audio_reset();
+	ws_audio_reset();
 	ws_gpu_reset();
 	nec_reset(NULL);
 	nec_set_reg(NEC_SP,0x2000);
@@ -166,8 +167,13 @@ int ws_executeLine(uint8 *framebuffer, int renderLine)
 	ws_ioRam[2]=ws_gpu_scanline;
 
 	ws_cycles=nec_execute((ws_cyclesByLine>>1)+(rand()&7));
+	ws_audio_process(ws_cycles);
 
-	ws_cycles+=nec_execute((ws_cyclesByLine>>1)+(rand()&7));
+	{
+		const uint32 second_cycles = nec_execute((ws_cyclesByLine>>1)+(rand()&7));
+		ws_audio_process(second_cycles);
+		ws_cycles += second_cycles;
+	}
 #ifdef DEBUG
 sprintf(buf, "%d", ws_cycles);
 pgDebug(buf, 2);

@@ -18,7 +18,7 @@
 #include "ieeprom.h"
 #include "gpu.h"
 #include "psram_spi.h"
-//#include "audio.h"
+#include "ws_audio.h"
 
 extern uint32 externalEepromAddressMask;
 extern uint32 romAddressMask;
@@ -130,10 +130,6 @@ uint8_t cpu_readport(uint8_t port) {
     int w1, w2;
 
     switch (port) {
-        case 0x4e:
-        case 0x4f:
-        case 0x50:
-        case 0x51:
         case 0x80:
         case 0x81:
         case 0x82:
@@ -155,8 +151,7 @@ uint8_t cpu_readport(uint8_t port) {
         case 0x92:
         case 0x93:
         case 0x94:
-//				return(ws_audio_port_read(port));
-            return 0xff;
+            return ws_audio_port_read(port);
         case 0xaa:
             return 0xff;
         case 0xb3:    // ???
@@ -300,10 +295,6 @@ void cpu_writeport(uint32_t port, uint8_t value) {
     ws_ioRam[port] = value;
 
     switch (port) {
-        case 0x4e:
-        case 0x4f:
-        case 0x50:
-        case 0x51:
         case 0x80:
         case 0x81:
         case 0x82:
@@ -325,7 +316,7 @@ void cpu_writeport(uint32_t port, uint8_t value) {
         case 0x92:
         case 0x93:
         case 0x94:
-//				ws_audio_port_write(port,value);
+            ws_audio_port_write(port, value);
             break;
         case 0x48:    // DMA
 

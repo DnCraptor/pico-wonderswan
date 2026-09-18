@@ -161,11 +161,14 @@ void i2s_dma_write(i2s_config_t *i2s_config,const int16_t *samples) {
     /* Copy samples into the DMA buffer */
 
 #ifdef AUDIO_PWM_PIN
-    for(uint16_t i=0;i<i2s_config->dma_trans_count*2;i++) {
-           
-            i2s_config->dma_buf[i] = (65536/2+(samples[i]))>>(4+i2s_config->volume);
-
-        }
+    /* dma_buf is deliberately a uint16_t view over dma_trans_count 32-bit
+     * DMA words. Store L/R as adjacent halfwords; DMA_SIZE_32 then writes
+     * each stereo pair to PWM CC (A in bits 15:0, B in bits 31:16).
+     * This is the proven Gamate/Watara PWM layout. */
+    for (uint16_t i = 0; i < i2s_config->dma_trans_count * 2; ++i) {
+        i2s_config->dma_buf[i] =
+            (uint16_t)((65536 / 2 + samples[i]) >> (4 + i2s_config->volume));
+    }
 #else
 
     if(i2s_config->volume==0) {
