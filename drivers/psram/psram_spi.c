@@ -1,5 +1,13 @@
 #include "psram_spi.h"
 
+#if PICO_RP2350
+extern bool wonderswan_qspi_psram_available(void);
+extern uintptr_t wonderswan_qspi_aux_base(void);
+static inline volatile uint8_t *qspi_aux_ptr(uint32_t addr) {
+    return (volatile uint8_t *)(wonderswan_qspi_aux_base() + addr);
+}
+#endif
+
 static psram_spi_inst_t psram_spi;
 
 #define ITE_PSRAM (1ul << 20)
@@ -33,6 +41,9 @@ uint32_t psram_size() {
 }
 
 uint32_t init_psram() {
+#if PICO_RP2350
+    if (wonderswan_qspi_psram_available()) return 2u << 20;
+#endif
     psram_spi = psram_spi_init_clkdiv(pio0, -1, 2.0, false);
     if ( !_psram_size() ) {
         psram_spi = psram_spi_init_clkdiv(pio0, -1, 2.0, true);
@@ -48,6 +59,9 @@ void psram_cleanup() {
 }
 
 void write8psram(uint32_t addr32, uint8_t v) {
+#if PICO_RP2350
+    if (wonderswan_qspi_psram_available()) { *qspi_aux_ptr(addr32) = v; return; }
+#endif
     psram_write8(&psram_spi, addr32, v);
 }
 
@@ -72,6 +86,9 @@ void readpsram(uint8_t* b, uint32_t addr32, size_t sz) {
 }
 
 uint8_t read8psram(uint32_t addr32) {
+#if PICO_RP2350
+    if (wonderswan_qspi_psram_available()) return *qspi_aux_ptr(addr32);
+#endif
     return psram_read8(&psram_spi, addr32);
 }
 

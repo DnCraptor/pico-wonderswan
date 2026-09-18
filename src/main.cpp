@@ -13,6 +13,7 @@
 #include "ff.h"
 #include "ps2kbd_mrmltr.h"
 #include "psram_spi.h"
+#include "qspi_psram.h"
 
 extern "C" {
 #include "ws.h"
@@ -21,7 +22,7 @@ extern "C" {
 #define HOME_DIR "\\WS"
 extern char __flash_binary_end;
 #define FLASH_TARGET_OFFSET (((((uintptr_t)&__flash_binary_end - XIP_BASE) / FLASH_SECTOR_SIZE) + 4) * FLASH_SECTOR_SIZE)
-static const uintptr_t rom = XIP_BASE + FLASH_TARGET_OFFSET;
+static uintptr_t rom = XIP_BASE + FLASH_TARGET_OFFSET;
 
 #define AUDIO_SAMPLE_RATE 22050
 #define AUDIO_BUFFER_LENGTH (AUDIO_SAMPLE_RATE / 60 + 1)
@@ -203,50 +204,85 @@ bool filebrowser_loadfile(const char pathname[256]) {
     draw_window("Loading ROM", window_x, window_y, 43, 5);
 
     FILINFO fileinfo;
-    f_stat(pathname, &fileinfo);
-    rom_size = fileinfo.fsize;
-    if ((16384 - 64) << 10 < fileinfo.fsize) {
+    if (FR_OK != f_stat(pathname, &fileinfo) || fileinfo.fsize == 0) {
+        draw_text("ERROR: ROM not found or empty!", window_x + 1, window_y + 2, 13, 1);
+        sleep_ms(5000);
+        return false;
+    }
+
+    const uint32_t load_size = fileinfo.fsize;
+    if (((16384 - 64) << 10) < load_size) {
         draw_text("ERROR: ROM too large! Canceled!!", window_x + 1, window_y + 2, 13, 1);
         sleep_ms(5000);
         return false;
     }
 
-
     draw_text("Loading...", window_x + 1, window_y + 2, 10, 1);
-    sleep_ms(500);
 
+    bool load_ok = false;
+    if (wonderswan_qspi_psram_available()) {
+        const size_t capacity = wonderswan_qspi_rom_capacity();
+        if (load_size > capacity) {
+            draw_text("ERROR: ROM too large for PSRAM!", window_x + 1, window_y + 2, 13, 1);
+            sleep_ms(5000);
+            return false;
+        }
 
-    multicore_lockout_start_blocking();
-    auto flash_target_offset = FLASH_TARGET_OFFSET;
-    const uint32_t ints = save_and_disable_interrupts();
-    flash_range_erase(flash_target_offset, fileinfo.fsize);
-    restore_interrupts(ints);
+        if (FR_OK == f_open(&file, pathname, FA_READ)) {
+            uint8_t *dst = (uint8_t *)WONDERSWAN_QSPI_PSRAM_BASE;
+            uint32_t total_read = 0;
+            FRESULT read_result = FR_OK;
+            do {
+                read_result = f_read(&file, dst, 4096, &bytes_read);
+                dst += bytes_read;
+                total_read += bytes_read;
+            } while (read_result == FR_OK && bytes_read != 0);
+            load_ok = read_result == FR_OK && total_read == load_size;
+            f_close(&file);
+        }
+    } else {
+        multicore_lockout_start_blocking();
+        auto flash_target_offset = FLASH_TARGET_OFFSET;
+        uint32_t total_read = 0;
+        FRESULT read_result = FR_OK;
 
-    if (FR_OK == f_open(&file, pathname, FA_READ)) {
-        uint8_t buffer[FLASH_PAGE_SIZE];
+        if (FR_OK == f_open(&file, pathname, FA_READ)) {
+            static uint8_t buffer[FLASH_SECTOR_SIZE] __aligned(4);
+            do {
+                memset(buffer, 0xff, sizeof(buffer));
+                read_result = f_read(&file, buffer, sizeof(buffer), &bytes_read);
+                if (read_result != FR_OK || bytes_read == 0)
+                    break;
 
-        do {
-            f_read(&file, &buffer, FLASH_PAGE_SIZE, &bytes_read);
+                const uint8_t *flash_data =
+                    (const uint8_t *)(XIP_BASE + flash_target_offset);
+                if (memcmp(flash_data, buffer, sizeof(buffer)) != 0) {
+                    const uint32_t ints = save_and_disable_interrupts();
+                    flash_range_erase(flash_target_offset, FLASH_SECTOR_SIZE);
+                    flash_range_program(flash_target_offset, buffer, FLASH_SECTOR_SIZE);
+                    restore_interrupts(ints);
+                }
 
-            if (bytes_read) {
-                const uint32_t ints = save_and_disable_interrupts();
-                flash_range_program(flash_target_offset, buffer, FLASH_PAGE_SIZE);
-                restore_interrupts(ints);
-
+                total_read += bytes_read;
                 gpio_put(PICO_DEFAULT_LED_PIN, flash_target_offset >> 13 & 1);
-
-                flash_target_offset += FLASH_PAGE_SIZE;
-            }
-        } while (bytes_read != 0);
+                flash_target_offset += FLASH_SECTOR_SIZE;
+            } while (bytes_read != 0);
+            f_close(&file);
+        }
 
         gpio_put(PICO_DEFAULT_LED_PIN, true);
+        multicore_lockout_end_blocking();
+        load_ok = read_result == FR_OK && total_read == load_size;
     }
-    f_close(&file);
-    multicore_lockout_end_blocking();
-    // restore_interrupts(ints);
 
+    if (!load_ok) {
+        draw_text("ERROR: ROM load failed!", window_x + 1, window_y + 2, 13, 1);
+        sleep_ms(5000);
+        return false;
+    }
+
+    rom_size = load_size;
     strcpy(filename, fileinfo.fname);
-
     return true;
 }
 
@@ -768,11 +804,15 @@ int main() {
         sleep_ms(33);
         gpio_put(PICO_DEFAULT_LED_PIN, false);
     }
-    init_psram();
-    if(!PSRAM_AVAILABLE) {
-        graphics_set_mode(TEXTMODE_DEFAULT);
-        draw_text("PSRAM ERROR", 0,0, 15,1);
-        while(1);
+#if PICO_RP2350
+    if (wonderswan_qspi_psram_init()) {
+        rom = WONDERSWAN_QSPI_PSRAM_BASE;
+    } else
+#endif
+    {
+        // Keep the legacy SPI PSRAM path for cartridge SRAM/EEPROM on boards
+        // without memory-mapped QSPI PSRAM.
+        init_psram();
     }
     while (true) {
         graphics_set_mode(TEXTMODE_DEFAULT);
