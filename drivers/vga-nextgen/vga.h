@@ -14,3 +14,4 @@
 
 // True after the VGA frame boundary has latched this framebuffer.
 bool vga_is_buffer_active(const uint8_t* buffer);
+bool vga_is_buffer_in_use(const uint8_t* buffer);

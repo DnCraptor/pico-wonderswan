@@ -37,6 +37,9 @@ semaphore vga_start_semaphore;
 
 alignas(4) uint8_t SCREEN1[144][224];
 alignas(4) uint8_t SCREEN2[144][224];
+#ifdef VGA
+alignas(4) uint8_t SCREEN3[144][224];
+#endif
 //alignas(4) int audio_buffer[AUDIO_BUFFER_LENGTH];
 extern uint32_t	ws_shades[16];
 
@@ -782,8 +785,7 @@ void __time_critical_func(render_core)() {
     __unreachable();
 }
 
-int frame, frame_cnt = 0;
-int frame_timer_start = 0;
+int frame;
 bool PSRAM_AVAILABLE = true;
 
 int main() {
@@ -836,6 +838,13 @@ int main() {
         frame = 0;
         int odd = 0;
         uint8_t* buffer = (uint8_t*)SCREEN2;
+#ifdef VGA
+        // The WonderSwan video timing is 3.072 MHz / (256 cycles * 159 lines),
+        // i.e. one emulated frame every 13250 us (~75.47 Hz). VGA is normally
+        // slower, so use a third buffer and let VGA latch the newest completed
+        // frame instead of throttling emulation to the VGA refresh rate.
+        uint64_t next_ws_frame = time_us_64() + 13250;
+#endif
         while (!reboot) {
             ws_key_start = gamepad1_bits.start;
             ws_key_button_1 = gamepad1_bits.a;
@@ -852,26 +861,48 @@ int main() {
 
             while(!ws_executeLine(buffer, 1)) ;
             graphics_set_buffer(buffer, 224, 144);
-#ifdef VGA
-            // Do not render into the previous framebuffer until VGA has
-            // latched the newly completed frame at its frame boundary.
-            while (!vga_is_buffer_active(buffer)) {
-                tight_loop_contents();
-            }
-#endif
             frame++;
+#ifdef VGA
+            // Never render into either the buffer currently scanned by VGA or
+            // the newest completed frame waiting for the next VGA frame boundary.
+            // If emulation outruns VGA, replacing the pending frame is safe: the
+            // dropped frame was never scanned out.
+            uint8_t* const candidates[] = {
+                (uint8_t*)SCREEN1, (uint8_t*)SCREEN2, (uint8_t*)SCREEN3
+            };
+            do {
+                buffer = NULL;
+                for (unsigned i = 0; i < 3; ++i) {
+                    if (!vga_is_buffer_in_use(candidates[i])) {
+                        buffer = candidates[i];
+                        break;
+                    }
+                }
+                if (!buffer) tight_loop_contents();
+            } while (!buffer);
+
+            while ((int64_t)(time_us_64() - next_ws_frame) < 0)
+                tight_loop_contents();
+            next_ws_frame += 13250;
+            // Do not accumulate a large delay after menus or other long pauses.
+            const uint64_t now = time_us_64();
+            if ((int64_t)(now - next_ws_frame) > 13250)
+                next_ws_frame = now + 13250;
+#else
             odd = frame & 1;
             buffer = (uint8_t*)(odd ? SCREEN1 : SCREEN2);
 
-            if (1) {
-                if (++frame_cnt == 6) {
-                    while (time_us_64() - frame_timer_start < 16666 * 6) {
-                        //busy_wait_at_least_cycles(10);
-                    }  // 60 Hz
-                    frame_timer_start = time_us_64();
-                    frame_cnt = 0;
-                }
+            // Keep the existing 60 Hz pacing for outputs whose drivers do not
+            // yet provide frame-boundary buffer ownership.
+            static uint8_t frame_cnt = 0;
+            static uint64_t frame_timer_start = 0;
+            if (++frame_cnt == 6) {
+                while (time_us_64() - frame_timer_start < 16666 * 6)
+                    tight_loop_contents();
+                frame_timer_start = time_us_64();
+                frame_cnt = 0;
             }
+#endif
 
             tight_loop_contents();
         }

@@ -454,6 +454,10 @@ bool vga_is_buffer_active(const uint8_t* buffer) {
     return displayed_graphics_buffer == buffer;
 }
 
+bool vga_is_buffer_in_use(const uint8_t* buffer) {
+    return displayed_graphics_buffer == buffer || graphics_buffer == buffer;
+}
+
 void graphics_set_buffer(uint8_t* buffer, const uint16_t width, const uint16_t height) {
     graphics_buffer = buffer;
     graphics_buffer_width = width;
