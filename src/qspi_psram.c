@@ -9,8 +9,12 @@
 #include "hardware/structs/sysinfo.h"
 #include "hardware/structs/xip_ctrl.h"
 
+#ifndef PSRAM_CS1_GPIO_RP2350A
 #define PSRAM_CS1_GPIO_RP2350A 19u
+#endif
+#ifndef PSRAM_CS1_GPIO_RP2350B
 #define PSRAM_CS1_GPIO_RP2350B 47u
+#endif
 
 static bool psram_available;
 static size_t psram_size;

@@ -173,7 +173,7 @@ void process_kbd_report(hid_keyboard_report_t const* report, hid_keyboard_report
 
 Ps2Kbd_Mrmltr ps2kbd(
         pio1,
-        0,
+        PS2KBD_GPIO_FIRST,
         process_kbd_report);
 
 
