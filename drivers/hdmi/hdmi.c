@@ -58,6 +58,8 @@ uint32_t conv_color[1224];
 
 //индекс, проверяющий зависание
 static uint32_t irq_inx = 0;
+static bool hdmi_ready = false;
+static volatile bool hdmi_ui_palette_pending = false;
 
 //функции и константы HDMI
 
@@ -150,6 +152,15 @@ static uint tmds_encoder(const uint8_t d8) {
     return d_out;
 }
 
+static inline void hdmi_set_palette_entry(uint8_t i, uint32_t color888) {
+    uint64_t* conv_color64 = (uint64_t *) conv_color;
+    const uint8_t R = (color888 >> 16) & 0xff;
+    const uint8_t G = (color888 >> 8) & 0xff;
+    const uint8_t B = color888 & 0xff;
+    conv_color64[i * 2] = get_ser_diff_data(tmds_encoder(R), tmds_encoder(G), tmds_encoder(B));
+    conv_color64[i * 2 + 1] = conv_color64[i * 2] ^ 0x0003ffffffffffffl;
+}
+
 static void pio_set_x(PIO pio, const int sm, uint32_t v) {
     uint instr_shift = pio_encode_in(pio_x, 4);
     uint instr_mov = pio_encode_mov(pio_x, pio_isr);
@@ -162,6 +173,8 @@ static void pio_set_x(PIO pio, const int sm, uint32_t v) {
 }
 
 
+static void hdmi_restore_ui_palette(void);
+
 static void __scratch_y("hdmi_driver") dma_handler_HDMI() {
     static uint32_t inx_buf_dma;
     static uint line = 0;
@@ -171,6 +184,14 @@ static void __scratch_y("hdmi_driver") dma_handler_HDMI() {
     dma_channel_set_read_addr(dma_chan_ctrl, &DMA_BUF_ADDR[inx_buf_dma & 1], false);
 
     line = line >= 524 ? 0 : line + 1;
+
+    // Each TMDS palette entry is 64 bits, but the RP2350 updates it with
+    // two 32-bit stores. Restore UI colours only in vertical blanking, when
+    // the converter cannot be reading palette slots 200..215.
+    if (line == 480 && hdmi_ui_palette_pending) {
+        hdmi_restore_ui_palette();
+        hdmi_ui_palette_pending = false;
+    }
 
     if ((line & 1) == 0) return;
 
@@ -341,7 +362,7 @@ static inline bool hdmi_init() {
     for (int ci = 0; ci < 240; ci++) graphics_set_palette(ci, palette[ci]); //
 
     //255 - цвет фона
-    graphics_set_palette(255, palette[255]);
+    hdmi_set_palette_entry(255, palette[255]);
 
 
     //240-243 служебные данные(синхра) напрямую вносим в массив -конвертер
@@ -516,24 +537,43 @@ static inline bool hdmi_init() {
 
     return true;
 };
-//выбор видеорежима
+static void hdmi_restore_ui_palette(void) {
+    static const uint32_t ui_palette[16] = {
+        RGB888(0x00, 0x00, 0x00), RGB888(0x00, 0x00, 0xC4),
+        RGB888(0x00, 0xC4, 0x00), RGB888(0x00, 0xC4, 0xC4),
+        RGB888(0xC4, 0x00, 0x00), RGB888(0xC4, 0x00, 0xC4),
+        RGB888(0xC4, 0x7E, 0x00), RGB888(0xC4, 0xC4, 0xC4),
+        RGB888(0x4E, 0x4E, 0x4E), RGB888(0x4E, 0x4E, 0xDC),
+        RGB888(0x4E, 0xDC, 0x4E), RGB888(0x4E, 0xF3, 0xF3),
+        RGB888(0xDC, 0x4E, 0x4E), RGB888(0xF3, 0x4E, 0xF3),
+        RGB888(0xF3, 0xF3, 0x4E), RGB888(0xFF, 0xFF, 0xFF)
+    };
+
+    for (unsigned i = 0; i < 16; ++i)
+        hdmi_set_palette_entry((uint8_t)(200 + i), ui_palette[i]);
+}
+
+// Select video mode. Rebuild HDMI-only palette entries because the game
+// palette is updated at runtime while the UI uses fixed slots 200..215.
 void graphics_set_mode(enum graphics_mode_t mode) {
     graphics_mode = mode;
+
+    // graphics_set_mode() is called once before graphics_init() while the
+    // system clock is being changed. The HDMI palette is not live yet there.
+    if (hdmi_ready && (mode == TEXTMODE_DEFAULT || mode == TEXTMODE_53x30))
+        hdmi_ui_palette_pending = true;
+
     clrScr(0);
 };
 
 void graphics_set_palette(uint8_t i, uint32_t color888) {
     palette[i] = color888 & 0x00ffffff;
 
+    // 240..255 are HDMI-private indices. WonderSwan palette RAM may write
+    // index 255, but that must not change the HDMI border colour.
+    if (i >= BASE_HDMI_CTRL_INX) return;
 
-    if ((i >= BASE_HDMI_CTRL_INX) && (i != 255)) return; //не записываем "служебные" цвета
-
-    uint64_t* conv_color64 = (uint64_t *) conv_color;
-    const uint8_t R = (color888 >> 16) & 0xff;
-    const uint8_t G = (color888 >> 8) & 0xff;
-    const uint8_t B = (color888 >> 0) & 0xff;
-    conv_color64[i * 2] = get_ser_diff_data(tmds_encoder(R), tmds_encoder(G), tmds_encoder(B));
-    conv_color64[i * 2 + 1] = conv_color64[i * 2] ^ 0x0003ffffffffffffl;
+    hdmi_set_palette_entry(i, color888);
 };
 
 void graphics_set_buffer(uint8_t* buffer, uint16_t width, uint16_t height) {
@@ -574,11 +614,13 @@ void graphics_init() {
     graphics_set_palette(215, RGB888(0xFF, 0xFF, 0xFF)); //white
 
     hdmi_init();
+    hdmi_ready = true;
 }
 
 void graphics_set_bgcolor(uint32_t color888) //определяем зарезервированный цвет в палитре
 {
-    graphics_set_palette(255, color888);
+    palette[255] = color888 & 0x00ffffff;
+    hdmi_set_palette_entry(255, color888);
 };
 
 void graphics_set_offset(int x, int y) {
