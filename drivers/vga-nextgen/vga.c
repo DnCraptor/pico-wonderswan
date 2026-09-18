@@ -43,6 +43,7 @@ static int dma_chan_ctrl;
 static int dma_chan;
 
 static volatile uint8_t* graphics_buffer;
+static volatile uint8_t* displayed_graphics_buffer = NULL;
 uint8_t* text_buffer = NULL;
 static uint graphics_buffer_width = 0;
 static uint graphics_buffer_height = 0;
@@ -80,6 +81,7 @@ void __time_critical_func() dma_handler_VGA() {
         screen_line = 0;
         frame_number++;
         input_buffer = graphics_buffer;
+        displayed_graphics_buffer = input_buffer;
     }
 
     if (screen_line >= N_lines_visible) {
@@ -446,6 +448,10 @@ void graphics_set_mode(enum graphics_mode_t mode) {
         base_ptr = (uint8_t *)lines_pattern[3];
         memcpy(base_ptr, lines_pattern[0], line_size);
     }
+}
+
+bool vga_is_buffer_active(const uint8_t* buffer) {
+    return displayed_graphics_buffer == buffer;
 }
 
 void graphics_set_buffer(uint8_t* buffer, const uint16_t width, const uint16_t height) {

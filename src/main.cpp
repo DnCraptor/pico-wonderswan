@@ -812,6 +812,13 @@ int main() {
 
             while(!ws_executeLine(buffer, 1)) ;
             graphics_set_buffer(buffer, 224, 144);
+#ifdef VGA
+            // Do not render into the previous framebuffer until VGA has
+            // latched the newly completed frame at its frame boundary.
+            while (!vga_is_buffer_active(buffer)) {
+                tight_loop_contents();
+            }
+#endif
             frame++;
             odd = frame & 1;
             buffer = (uint8_t*)(odd ? SCREEN1 : SCREEN2);
