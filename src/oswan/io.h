@@ -27,6 +27,7 @@ extern	uint8	ws_key_button_2;
 void ws_io_init(void);
 void ws_io_reset(void);
 void ws_io_flipControls(void);
+void ws_io_setControlsFlipped(int flipped);
 void ws_io_done(void);
 
 #endif

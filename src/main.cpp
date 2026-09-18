@@ -17,6 +17,7 @@
 
 extern "C" {
 #include "ws.h"
+#include "io.h"
 }
 
 #define HOME_DIR "\\WS"
@@ -37,9 +38,7 @@ semaphore vga_start_semaphore;
 
 alignas(4) uint8_t SCREEN1[144][224];
 alignas(4) uint8_t SCREEN2[144][224];
-#ifdef VGA
 alignas(4) uint8_t SCREEN3[144][224];
-#endif
 //alignas(4) int audio_buffer[AUDIO_BUFFER_LENGTH];
 extern uint32_t	ws_shades[16];
 
@@ -59,6 +58,33 @@ static input_bits_t gamepad1_bits = { false, false, false, false, false, false, 
 static input_bits_t gamepad2_bits = { false, false, false, false, false, false, false, false };
 
 static bool swap_ab = false;
+
+enum rotation_mode_t : uint8_t {
+    ROTATION_AUTO = 0,
+    ROTATION_LANDSCAPE,
+    ROTATION_PORTRAIT,
+    ROTATION_MANUAL,
+};
+
+static uint8_t rotation_mode = ROTATION_AUTO;
+static bool manual_portrait = false;
+
+static bool portrait_enabled() {
+    switch (rotation_mode) {
+        case ROTATION_LANDSCAPE: return false;
+        case ROTATION_PORTRAIT:  return true;
+        case ROTATION_MANUAL:    return manual_portrait;
+        case ROTATION_AUTO:
+        default:                 return ws_rotated() != 0;
+    }
+}
+
+static void rotate_frame_90cw(const uint8_t *src, uint8_t *dst) {
+    // Same clockwise transform used by Beetle WonderSwan's software rotation.
+    for (unsigned x = 0; x < 224; ++x)
+        for (unsigned y = 0; y < 144; ++y)
+            dst[y + (223 - x) * 144] = src[x + y * 224];
+}
 extern	uint8	ws_key_start;
 extern	uint8	ws_key_left;
 extern	uint8	ws_key_right;
@@ -599,6 +625,7 @@ bool toggle_color() {
 int palette_index = 0;
 const MenuItem menu_items[] = {
         { "Swap AB <> BA: %s", ARRAY, &swap_ab, nullptr, 1, { "NO ", "YES" }},
+        { "Screen rotation: %s", ARRAY, &rotation_mode, nullptr, 3, { "Auto", "Landscape", "Portrait ", "Manual   " }},
         {},
         //{ "Player 1: %s",        ARRAY, &player_1_input, 2, { "Keyboard ", "Gamepad 1", "Gamepad 2" }},
         //{ "Player 2: %s",        ARRAY, &player_2_input, 2, { "Keyboard ", "Gamepad 1", "Gamepad 2" }},
@@ -635,6 +662,7 @@ void menu() {
     bool exit = false;
     memset((uint8_t*)SCREEN1, 0, 144 * 224);
     memset((uint8_t*)SCREEN2, 0, 144 * 224);
+    memset((uint8_t*)SCREEN3, 0, 144 * 224);
 
     graphics_set_mode(TEXTMODE_DEFAULT);
     char footer[TEXTMODE_COLS];
@@ -837,7 +865,10 @@ int main() {
 
         frame = 0;
         int odd = 0;
-        uint8_t* buffer = (uint8_t*)SCREEN2;
+        bool select_pressed_last_frame = false;
+        bool portrait = portrait_enabled();
+        ws_io_setControlsFlipped(portrait);
+        uint8_t* buffer = portrait ? (uint8_t*)SCREEN1 : (uint8_t*)SCREEN2;
 #ifdef VGA
         // The WonderSwan video timing is 3.072 MHz / (256 cycles * 159 lines),
         // i.e. one emulated frame every 13250 us (~75.47 Hz). VGA is normally
@@ -859,27 +890,62 @@ int main() {
                 menu();
             }
 
+            if (rotation_mode == ROTATION_MANUAL && !gamepad1_bits.start &&
+                gamepad1_bits.select && !select_pressed_last_frame) {
+                manual_portrait = !manual_portrait;
+            }
+            select_pressed_last_frame = gamepad1_bits.select;
+
+            portrait = portrait_enabled();
+            ws_io_setControlsFlipped(portrait);
+            // Center the native image in the 320x240 VGA viewport. Landscape
+            // is 224x144 -> (48,48); portrait is 144x224 -> (88,8).
+            graphics_set_offset(portrait ? 88 : 48, portrait ? 8 : 48);
+
+            // Portrait mode renders the native 224x144 frame into SCREEN1, then
+            // rotates it to a 144x224 presentation buffer.
+            if (portrait)
+                buffer = (uint8_t*)SCREEN1;
+
             while(!ws_executeLine(buffer, 1)) ;
-            graphics_set_buffer(buffer, 224, 144);
+            uint8_t *present_buffer = buffer;
+            if (portrait) {
+#ifdef VGA
+                // SCREEN2/3 are presentation buffers. The pending (not active)
+                // buffer may be replaced before VGA latches it at frame boundary.
+                present_buffer = vga_is_buffer_active((uint8_t*)SCREEN2)
+                               ? (uint8_t*)SCREEN3 : (uint8_t*)SCREEN2;
+#else
+                present_buffer = (frame & 1) ? (uint8_t*)SCREEN2 : (uint8_t*)SCREEN3;
+#endif
+                rotate_frame_90cw((uint8_t*)SCREEN1, present_buffer);
+                graphics_set_buffer(present_buffer, 144, 224);
+            } else {
+                graphics_set_buffer(present_buffer, 224, 144);
+            }
             frame++;
 #ifdef VGA
             // Never render into either the buffer currently scanned by VGA or
             // the newest completed frame waiting for the next VGA frame boundary.
             // If emulation outruns VGA, replacing the pending frame is safe: the
             // dropped frame was never scanned out.
-            uint8_t* const candidates[] = {
-                (uint8_t*)SCREEN1, (uint8_t*)SCREEN2, (uint8_t*)SCREEN3
-            };
-            do {
-                buffer = NULL;
-                for (unsigned i = 0; i < 3; ++i) {
-                    if (!vga_is_buffer_in_use(candidates[i])) {
-                        buffer = candidates[i];
-                        break;
+            if (!portrait) {
+                uint8_t* const candidates[] = {
+                    (uint8_t*)SCREEN1, (uint8_t*)SCREEN2, (uint8_t*)SCREEN3
+                };
+                do {
+                    buffer = NULL;
+                    for (unsigned i = 0; i < 3; ++i) {
+                        if (!vga_is_buffer_in_use(candidates[i])) {
+                            buffer = candidates[i];
+                            break;
+                        }
                     }
-                }
-                if (!buffer) tight_loop_contents();
-            } while (!buffer);
+                    if (!buffer) tight_loop_contents();
+                } while (!buffer);
+            } else {
+                buffer = (uint8_t*)SCREEN1;
+            }
 
             while ((int64_t)(time_us_64() - next_ws_frame) < 0)
                 tight_loop_contents();
@@ -889,8 +955,12 @@ int main() {
             if ((int64_t)(now - next_ws_frame) > 13250)
                 next_ws_frame = now + 13250;
 #else
-            odd = frame & 1;
-            buffer = (uint8_t*)(odd ? SCREEN1 : SCREEN2);
+            if (!portrait) {
+                odd = frame & 1;
+                buffer = (uint8_t*)(odd ? SCREEN1 : SCREEN2);
+            } else {
+                buffer = (uint8_t*)SCREEN1;
+            }
 
             // Keep the existing 60 Hz pacing for outputs whose drivers do not
             // yet provide frame-boundary buffer ownership.

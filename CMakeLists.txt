@@ -15,7 +15,7 @@ endif()
 set(PICO_BOARD pico2 CACHE STRING "Board type")
 
 cmake_minimum_required(VERSION 3.13)
-set(BUILD_VERSION "1.0.0")
+set(BUILD_VERSION "1.0.1")
 include(pico_sdk_import.cmake)
 
 project(wonderswan C CXX ASM)
