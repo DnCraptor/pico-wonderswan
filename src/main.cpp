@@ -25,7 +25,7 @@ extern char __flash_binary_end;
 #define FLASH_TARGET_OFFSET (((((uintptr_t)&__flash_binary_end - XIP_BASE) / FLASH_SECTOR_SIZE) + 4) * FLASH_SECTOR_SIZE)
 static uintptr_t rom = XIP_BASE + FLASH_TARGET_OFFSET;
 
-#define AUDIO_SAMPLE_RATE 22050
+#define AUDIO_SAMPLE_RATE 24000
 #define AUDIO_BUFFER_LENGTH (AUDIO_SAMPLE_RATE / 60 + 1)
 
 

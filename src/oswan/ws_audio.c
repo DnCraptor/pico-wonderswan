@@ -4,7 +4,7 @@
 #include "audio.h"
 
 #define WS_AUDIO_CLOCK 3072000u
-#define WS_AUDIO_RATE  22050u
+#define WS_AUDIO_RATE  24000u
 #define WS_AUDIO_BLOCK 256u
 
 extern uint8 internalRam[0x10000];
@@ -183,21 +183,48 @@ void ws_audio_reset(void) {
 }
 
 void ws_audio_process(uint32 cycles) {
-    if (sound_dma_control & 0x80) {
-        sound_dma_counter -= (int32)cycles;
-        while (sound_dma_counter <= 0 && (sound_dma_control & 0x80)) {
-            sound_dma_tick();
-            sound_dma_counter += sound_dma_period[sound_dma_control & 3];
+    /* ws_executeLine() feeds us roughly half a scanline at a time.  Do not
+     * advance the APU by the whole chunk and then emit all crossed samples:
+     * that quantizes a 24 kHz output edge to ~128 CPU cycles and is audible
+     * on PCM-heavy games.  Split the chunk at every output and SDMA event. */
+    while (cycles) {
+        uint32 step = cycles;
+
+        if (sound_dma_control & 0x80) {
+            if (sound_dma_counter <= 0) {
+                sound_dma_tick();
+                if (sound_dma_control & 0x80)
+                    sound_dma_counter += sound_dma_period[sound_dma_control & 3];
+                continue;
+            }
+            if ((uint32)sound_dma_counter < step)
+                step = (uint32)sound_dma_counter;
         }
-    }
 
-    for (unsigned ch = 0; ch < 4; ++ch)
-        advance_channel(ch, cycles);
+        const uint32 to_sample =
+            (WS_AUDIO_CLOCK - sample_accum + WS_AUDIO_RATE - 1) / WS_AUDIO_RATE;
+        if (to_sample < step)
+            step = to_sample;
 
-    sample_accum += cycles * WS_AUDIO_RATE;
-    while (sample_accum >= WS_AUDIO_CLOCK) {
-        sample_accum -= WS_AUDIO_CLOCK;
-        emit_sample();
+        for (unsigned ch = 0; ch < 4; ++ch)
+            advance_channel(ch, step);
+
+        sample_accum += step * WS_AUDIO_RATE;
+        if (sound_dma_control & 0x80)
+            sound_dma_counter -= (int32)step;
+        cycles -= step;
+
+        /* A DMA write that lands on an output edge is visible to that sample. */
+        if ((sound_dma_control & 0x80) && sound_dma_counter <= 0) {
+            sound_dma_tick();
+            if (sound_dma_control & 0x80)
+                sound_dma_counter += sound_dma_period[sound_dma_control & 3];
+        }
+
+        if (sample_accum >= WS_AUDIO_CLOCK) {
+            sample_accum -= WS_AUDIO_CLOCK;
+            emit_sample();
+        }
     }
 }
 
@@ -243,10 +270,19 @@ void ws_audio_dma_port_write(uint32 port, uint8 value) {
             sound_dma_size = (sound_dma_size & 0x00ffffu) | ((uint32)(value & 0x0f) << 16);
             sound_dma_size_reload = (sound_dma_size_reload & 0x00ffffu) | ((uint32)(value & 0x0f) << 16);
             break;
-        case 0x52:
+        case 0x52: {
+            const uint8 old_control = sound_dma_control;
             sound_dma_control = value;
-            if (value & 0x80) sound_dma_counter = sound_dma_period[value & 3];
+            if ((value & 0x80) && !sound_dma_size) {
+                /* Hardware refuses to start SDMA with a zero transfer length. */
+                sound_dma_control &= 0x7f;
+            } else if ((value & 0x80) && !(old_control & 0x80)) {
+                /* Starting DMA arms the selected divider.  Writes while it is
+                 * already running change control bits without restarting phase. */
+                sound_dma_counter = sound_dma_period[value & 3];
+            }
             break;
+        }
         default:
             break;
     }
