@@ -1031,16 +1031,34 @@ int main() {
 
             portrait = portrait_enabled();
 
-            // Keyboard exposes both native cursor groups simultaneously.
-            // A NES pad has only one D-pad, so map it by orientation.
-            ws_key_x1 = keyboard_bits.up    || (!portrait && (nespad_state & DPAD_UP));
-            ws_key_x2 = keyboard_bits.right || (!portrait && (nespad_state & DPAD_RIGHT));
-            ws_key_x3 = keyboard_bits.down  || (!portrait && (nespad_state & DPAD_DOWN));
-            ws_key_x4 = keyboard_bits.left  || (!portrait && (nespad_state & DPAD_LEFT));
-            ws_key_y1 = keyboard_y1 || (portrait && (nespad_state & DPAD_UP));
-            ws_key_y2 = keyboard_y2 || (portrait && (nespad_state & DPAD_RIGHT));
-            ws_key_y3 = keyboard_y3 || (portrait && (nespad_state & DPAD_DOWN));
-            ws_key_y4 = keyboard_y4 || (portrait && (nespad_state & DPAD_LEFT));
+            // Keep the physical keyboard layout stable in both orientations:
+            // WASD/arrows are movement, O/P/K/L are the four secondary action
+            // keys. WonderSwan swaps which native cursor group fulfils those
+            // roles when the console is rotated.
+            const bool move_up    = keyboard_bits.up    || (nespad_state & DPAD_UP);
+            const bool move_right = keyboard_bits.right || (nespad_state & DPAD_RIGHT);
+            const bool move_down  = keyboard_bits.down  || (nespad_state & DPAD_DOWN);
+            const bool move_left  = keyboard_bits.left  || (nespad_state & DPAD_LEFT);
+
+            if (!portrait) {
+                ws_key_x1 = move_up;
+                ws_key_x2 = move_right;
+                ws_key_x3 = move_down;
+                ws_key_x4 = move_left;
+                ws_key_y1 = keyboard_y1; // O
+                ws_key_y2 = keyboard_y2; // P
+                ws_key_y3 = keyboard_y3; // K
+                ws_key_y4 = keyboard_y4; // L
+            } else {
+                ws_key_y1 = move_up;
+                ws_key_y2 = move_right;
+                ws_key_y3 = move_down;
+                ws_key_y4 = move_left;
+                ws_key_x1 = keyboard_y1; // O
+                ws_key_x2 = keyboard_y2; // P
+                ws_key_x3 = keyboard_y3; // K
+                ws_key_x4 = keyboard_y4; // L
+            }
             // Center the native image in the 320x240 VGA viewport. Landscape
             // is 224x144 -> (48,48); portrait is 144x224 -> (88,8).
             graphics_set_offset(portrait ? 88 : 48, portrait ? 8 : 48);

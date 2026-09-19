@@ -196,10 +196,8 @@ uint8_t cpu_readport(uint8_t port) {
         case 0xb5:
             w1 = ws_ioRam[0xb5];
             if (w1 & 0x40) {
-                if (ws_key_flipped)
-                    w2 = (ws_key_start << 1);
-                else
-                    w2 = (ws_key_start << 1) | (ws_key_button_1 << 2) | (ws_key_button_2 << 3);
+                /* START, A and B remain physically available in both orientations. */
+                w2 = (ws_key_start << 1) | (ws_key_button_1 << 2) | (ws_key_button_2 << 3);
                 return (uint8) ((w1 & 0xf0) | w2);
             }
             if (w1 & 0x20) {
