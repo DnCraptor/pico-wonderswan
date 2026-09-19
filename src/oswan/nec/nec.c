@@ -70,7 +70,7 @@ typedef struct
 
 int nec_ICount;
 #if 1
-int nec_TotalClock = 0;
+uint32_t nec_TotalClock = 0;
 #endif
 
 static nec_Regs I;
@@ -932,16 +932,17 @@ int nec_execute(int cycles)
 //	cpu_type=V30;
 
 	while(nec_ICount>0) {
+		const int count_before = nec_ICount;
 
 		nec_instruction[FETCHOP]();
-//		nec_ICount++;
+		nec_TotalClock += (uint32_t)(count_before - nec_ICount);
     }
 
 	return cycles - nec_ICount;
 }
 
 #if 1
-int nec_get_clock()
+uint32_t nec_get_clock(void)
 {
 	return nec_TotalClock;
 }

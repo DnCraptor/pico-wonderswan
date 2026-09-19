@@ -144,6 +144,7 @@ uint8_t cpu_readport(uint8_t port) {
         case 0x51:
         case 0x52:
         case 0x53:
+            ws_audio_sync();
             return ws_audio_dma_port_read(port);
         case 0x64:
         case 0x65:
@@ -153,6 +154,7 @@ uint8_t cpu_readport(uint8_t port) {
         case 0x69:
         case 0x6a:
         case 0x6b:
+            ws_audio_sync();
             return ws_audio_hyper_port_read(port);
         case 0x80:
         case 0x81:
@@ -175,6 +177,7 @@ uint8_t cpu_readport(uint8_t port) {
         case 0x92:
         case 0x93:
         case 0x94:
+            ws_audio_sync();
             return ws_audio_port_read(port);
         case 0xaa:
             return 0xff;
@@ -329,6 +332,7 @@ void cpu_writeport(uint32_t port, uint8_t value) {
         case 0x51:
         case 0x52:
         case 0x53:
+            ws_audio_sync();
             ws_audio_dma_port_write(port, value);
             break;
         case 0x64:
@@ -339,6 +343,7 @@ void cpu_writeport(uint32_t port, uint8_t value) {
         case 0x69:
         case 0x6a:
         case 0x6b:
+            ws_audio_sync();
             ws_audio_hyper_port_write(port, value);
             break;
         case 0x80:
@@ -362,6 +367,7 @@ void cpu_writeport(uint32_t port, uint8_t value) {
         case 0x92:
         case 0x93:
         case 0x94:
+            ws_audio_sync();
             ws_audio_port_write(port, value);
             break;
         case 0x48:    // DMA

@@ -167,11 +167,11 @@ int ws_executeLine(uint8 *framebuffer, int renderLine)
 	ws_ioRam[2]=ws_gpu_scanline;
 
 	ws_cycles=nec_execute(ws_cyclesByLine >> 1);
-	ws_audio_process(ws_cycles);
+	ws_audio_sync();
 
 	{
 		const uint32 second_cycles = nec_execute(ws_cyclesByLine >> 1);
-		ws_audio_process(second_cycles);
+		ws_audio_sync();
 		ws_cycles += second_cycles;
 	}
 #ifdef DEBUG

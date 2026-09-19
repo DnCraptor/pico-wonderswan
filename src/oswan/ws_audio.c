@@ -2,6 +2,7 @@
 #include "ws_audio.h"
 #include "memory.h"
 #include "audio.h"
+#include "nec/necintrf.h"
 
 #define WS_AUDIO_CLOCK 3072000u
 #define WS_AUDIO_RATE  24000u
@@ -23,7 +24,10 @@ static uint8 sample_pos[4];
 static uint16 nreg;
 static int32 sweep_divider;
 static uint8 sweep_counter;
-static uint32 sample_accum;
+static uint16 sample_counter;
+static uint32 audio_cpu_clock;
+static int32 dc_prev_in[2];
+static int32 dc_prev_out[2];
 static int16 pcm[WS_AUDIO_BLOCK * 2];
 static uint16 pcm_frames;
 
@@ -36,6 +40,11 @@ static uint8 hyper_control;
 static uint8 hyper_channel_control;
 static uint8 hyper_dma_left;
 static uint8 hyper_manual_left;
+static int16 hyper_pending_left;
+static int16 hyper_pending_right;
+static uint8 hyper_rate_counter;
+
+static const uint8 hyper_rate_div[8] = { 1, 2, 3, 4, 5, 6, 8, 12 };
 
 static int16 hyper_expand(uint8 value) {
     const unsigned shift = hyper_control & 3;
@@ -60,28 +69,39 @@ static int16 hyper_expand(uint8 value) {
 }
 
 static void hyper_latch_input(uint8 value, int from_dma) {
+    const int16 sample = hyper_expand(value);
     hyper_input = value;
     if (from_dma) {
         const uint8 mode = (hyper_channel_control >> 5) & 3;
         if (mode == 0) {
-            /* Stereo DMA alternates left/right. */
-            if (hyper_dma_left) hyper_left = hyper_expand(value);
-            else                hyper_right = hyper_expand(value);
+            /* Stereo DMA alternates left/right input bytes. */
+            if (hyper_dma_left) hyper_pending_left = sample;
+            else                hyper_pending_right = sample;
             hyper_dma_left ^= 1;
         } else if (mode == 1) {
-            hyper_left = hyper_expand(value);
+            hyper_pending_left = sample;
         } else if (mode == 2) {
-            hyper_right = hyper_expand(value);
+            hyper_pending_right = sample;
         } else {
-            const int16 sample = hyper_expand(value);
-            hyper_left = hyper_right = sample;
+            hyper_pending_left = hyper_pending_right = sample;
         }
     } else {
         /* Manual writes to 69h always alternate as stereo. */
-        if (hyper_manual_left) hyper_left = hyper_expand(value);
-        else                   hyper_right = hyper_expand(value);
+        if (hyper_manual_left) hyper_pending_left = sample;
+        else                   hyper_pending_right = sample;
         hyper_manual_left ^= 1;
     }
+}
+
+static void hyper_clock(void) {
+    if (!(hyper_control & 0x80)) return;
+    if (hyper_rate_counter > 1) {
+        --hyper_rate_counter;
+        return;
+    }
+    hyper_rate_counter = hyper_rate_div[(hyper_control >> 4) & 7];
+    hyper_left = hyper_pending_left;
+    hyper_right = hyper_pending_right;
 }
 
 /* WonderSwan Color sound DMA (ports 4Ah..52h). The hardware clocks one
@@ -181,38 +201,57 @@ static void advance_channel(unsigned ch, uint32 cycles) {
     }
 }
 
+static int32 dc_block(unsigned ch, int32 input) {
+    /* Mednafen's reference core feeds the unsigned hardware DAC levels into
+     * Blip_Buffer with a 20 Hz bass filter.  At the native 24 kHz output rate
+     * this fixed-point one-pole blocker provides the same essential DC
+     * removal without a resampler or a large intermediate buffer. */
+    const int32 delta = input - dc_prev_in[ch];
+    const int32 output = delta + ((dc_prev_out[ch] * 32700) >> 15);
+    dc_prev_in[ch] = input;
+    dc_prev_out[ch] = output;
+    return output;
+}
+
 static void emit_sample(void) {
-    int32 left = 0, right = 0;
+    uint32 left = 0, right = 0;
 
     for (unsigned ch = 0; ch < 4; ++ch) {
         if (!(control & (1u << ch))) continue;
 
-        int s;
         if (ch == 1 && (control & 0x20)) {
-            const int dac = (int)volume[ch] - 128;
-            const int half = dac >> 1;
-            left  += (voice_volume & 4) ? dac : (voice_volume & 8) ? half : 0;
-            right += (voice_volume & 1) ? dac : (voice_volume & 2) ? half : 0;
+            /* Reference Mednafen semantics: port 89h is an unsigned 8-bit
+             * voice DAC value.  Do not reinterpret it as signed PCM. */
+            const unsigned sample = volume[ch];
+            const unsigned half = sample >> 1;
+            left  += (voice_volume & 4) ? sample : (voice_volume & 8) ? half : 0;
+            right += (voice_volume & 1) ? sample : (voice_volume & 2) ? half : 0;
             continue;
         }
 
-        if (ch == 3 && (control & 0x80) && (noise_control & 0x10))
-            s = (nreg & 1) ? 7 : -8;
-        else
-            s = wave_sample(ch) - 8;
+        const unsigned sample =
+            (ch == 3 && (control & 0x80) && (noise_control & 0x10))
+                ? ((nreg & 1) ? 15u : 0u)
+                : (unsigned)wave_sample(ch);
 
-        left  += s * ((volume[ch] >> 4) & 0x0f);
-        right += s * (volume[ch] & 0x0f);
+        left  += sample * ((volume[ch] >> 4) & 0x0f);
+        right += sample * (volume[ch] & 0x0f);
     }
 
-    // Four wavetable channels peak at about +/-480.  Hyper Voice is already
-    // signed 16-bit PCM and is mixed after the legacy four-channel path.
-    int32 out_left = left * 48;
-    int32 out_right = right * 48;
+    /* The headphone path is the 10-bit unsigned L/R legacy mix shifted by
+     * five bits, then summed with signed 16-bit Hyper Voice.  Keep the
+     * hardware's unsigned legacy arithmetic and remove only its DC component
+     * at the host PCM boundary, as the reference Blip_Buffer implementation
+     * does. */
+    int32 out_left = dc_block(0, (int32)(left << 5));
+    int32 out_right = dc_block(1, (int32)(right << 5));
+
+    hyper_clock();
     if (hyper_control & 0x80) {
         out_left += hyper_left;
         out_right += hyper_right;
     }
+
     pcm[pcm_frames * 2 + 0] = clamp16(out_left);
     pcm[pcm_frames * 2 + 1] = clamp16(out_right);
     if (++pcm_frames == WS_AUDIO_BLOCK) {
@@ -237,11 +276,16 @@ void ws_audio_reset(void) {
     nreg = 0;
     sweep_divider = 8192;
     sweep_counter = 1;
-    sample_accum = 0;
+    sample_counter = WS_AUDIO_CLOCK / WS_AUDIO_RATE;
+    audio_cpu_clock = nec_get_clock();
+    memset(dc_prev_in, 0, sizeof(dc_prev_in));
+    memset(dc_prev_out, 0, sizeof(dc_prev_out));
     pcm_frames = 0;
     hyper_left = hyper_right = 0;
     hyper_input = hyper_control = hyper_channel_control = 0;
     hyper_dma_left = hyper_manual_left = 1;
+    hyper_pending_left = hyper_pending_right = 0;
+    hyper_rate_counter = 1;
     sound_dma_source = sound_dma_source_reload = 0;
     sound_dma_size = sound_dma_size_reload = 0;
     sound_dma_control = 0;
@@ -268,15 +312,13 @@ void ws_audio_process(uint32 cycles) {
                 step = (uint32)sound_dma_counter;
         }
 
-        const uint32 to_sample =
-            (WS_AUDIO_CLOCK - sample_accum + WS_AUDIO_RATE - 1) / WS_AUDIO_RATE;
-        if (to_sample < step)
-            step = to_sample;
+        if (sample_counter < step)
+            step = sample_counter;
 
         for (unsigned ch = 0; ch < 4; ++ch)
             advance_channel(ch, step);
 
-        sample_accum += step * WS_AUDIO_RATE;
+        sample_counter -= (uint16)step;
         if (sound_dma_control & 0x80)
             sound_dma_counter -= (int32)step;
         cycles -= step;
@@ -288,10 +330,19 @@ void ws_audio_process(uint32 cycles) {
                 sound_dma_counter += sound_dma_period[sound_dma_control & 3];
         }
 
-        if (sample_accum >= WS_AUDIO_CLOCK) {
-            sample_accum -= WS_AUDIO_CLOCK;
+        if (!sample_counter) {
+            sample_counter = WS_AUDIO_CLOCK / WS_AUDIO_RATE;
             emit_sample();
         }
+    }
+}
+
+void ws_audio_sync(void) {
+    const uint32 now = nec_get_clock();
+    const uint32 elapsed = now - audio_cpu_clock;
+    if (elapsed) {
+        ws_audio_process(elapsed);
+        audio_cpu_clock = now;
     }
 }
 
@@ -311,22 +362,27 @@ uint8 ws_audio_hyper_port_read(uint32 port) {
 void ws_audio_hyper_port_write(uint32 port, uint8 value) {
     switch (port) {
         case 0x64:
-            hyper_left = (int16)(((uint16)hyper_left & 0xff00u) | value);
+            hyper_left = hyper_pending_left =
+                (int16)(((uint16)hyper_left & 0xff00u) | value);
             break;
         case 0x65:
-            hyper_left = (int16)(((uint16)value << 8) | ((uint16)hyper_left & 0x00ffu));
+            hyper_left = hyper_pending_left =
+                (int16)(((uint16)value << 8) | ((uint16)hyper_left & 0x00ffu));
             break;
         case 0x66:
-            hyper_right = (int16)(((uint16)hyper_right & 0xff00u) | value);
+            hyper_right = hyper_pending_right =
+                (int16)(((uint16)hyper_right & 0xff00u) | value);
             break;
         case 0x67:
-            hyper_right = (int16)(((uint16)value << 8) | ((uint16)hyper_right & 0x00ffu));
+            hyper_right = hyper_pending_right =
+                (int16)(((uint16)value << 8) | ((uint16)hyper_right & 0x00ffu));
             break;
         case 0x69:
             hyper_latch_input(value, 0);
             break;
         case 0x6a:
             hyper_control = value;
+            hyper_rate_counter = 1;
             break;
         case 0x6b:
             hyper_channel_control = value & 0x6f;
