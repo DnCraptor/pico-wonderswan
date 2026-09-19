@@ -41,8 +41,30 @@ uint32 sramAddressMask;
 uint32 externalEepromAddressMask;
 uint32 romAddressMask;
 static uint32 romSize;
+static uint32 romBankBase[16];
 
 
+
+////////////////////////////////////////////////////////////////////////////////
+// Cartridge ROM bank map
+////////////////////////////////////////////////////////////////////////////////
+static void __not_in_flash_func(ws_memory_update_rom_banks)(void) {
+    const uint32 bankMask = (romSize >> 16) - 1u;
+
+    romBankBase[2] = ((uint32)(ws_ioRam[IO_ROM_BANK_BASE_SELECTOR + 2] & bankMask)) << 16;
+    romBankBase[3] = ((uint32)(ws_ioRam[IO_ROM_BANK_BASE_SELECTOR + 3] & bankMask)) << 16;
+
+    const uint32 group = (uint32)(ws_ioRam[IO_ROM_BANK_BASE_SELECTOR] & 0x0f) << 4;
+    for (uint32 bank = 4; bank < 16; ++bank) {
+        const uint32 romBank = 256u - (group | bank);
+        romBankBase[bank] = (romSize - (romBank << 16)) & romAddressMask;
+    }
+}
+
+void __not_in_flash_func(ws_memory_rom_bank_changed)(uint32 port) {
+    if (port == 0xc0 || port == 0xc2 || port == 0xc3)
+        ws_memory_update_rom_banks();
+}
 
 ////////////////////////////////////////////////////////////////////////////////
 //
@@ -84,31 +106,32 @@ void __not_in_flash_func(cpu_writemem20)(uint32_t addr, uint8_t value) {
 //
 ////////////////////////////////////////////////////////////////////////////////
 uint8_t __not_in_flash_func(cpu_readmem20)(uint32_t addr) {
-    uint32 offset = addr & 0xffff;
-    uint32 bank = addr >> 16;
+    const uint32 offset = addr & 0xffffu;
+    const uint32 bank = addr >> 16;
 
-    switch (bank) {
-        case 0:        // 0 - RAM - 16 KB (WS) / 64 KB (WSC) internal RAM
-            if (ws_gpu_operatingInColor || offset < 0x4000)
-                return (internalRam[offset]);
-            return (0xff);
-
-        case 1:    // 1 - SRAM (cart)
-            return read8psram((1024 << 10) + (offset & sramAddressMask));
-//				return ws_staticRam[offset&sramAddressMask];
-        case 2:
-        case 3:
-            return ws_rom[offset + ((ws_ioRam[IO_ROM_BANK_BASE_SELECTOR + bank] & ((romSize >> 16) - 1)) << 16)];
-        default: {
-            unsigned int romBank = (256 - (((ws_ioRam[IO_ROM_BANK_BASE_SELECTOR] & 0xf) << 4) | (bank & 0xf)));
-            /* Cartridge ROM banks mirror across the actual ROM size.  Keep the
-               calculated address inside the loaded image; unsigned underflow
-               here otherwise turns a valid bank mirror into an invalid XIP
-               access when ROM is backed directly by flash. */
-            return ws_rom[(offset + romSize - (romBank << 16)) & romAddressMask];
-        }
+    if (bank == 0) {
+        if (ws_gpu_operatingInColor || offset < 0x4000)
+            return internalRam[offset];
+        return 0xff;
     }
-    return (0xff);
+    if (bank == 1)
+        return read8psram((1024 << 10) + (offset & sramAddressMask));
+
+    if (__builtin_expect(bank < 16, 1))
+        return ws_rom[romBankBase[bank] + offset];
+
+    const uint32 romBank = 256u - (((uint32)(ws_ioRam[IO_ROM_BANK_BASE_SELECTOR] & 0x0f) << 4) | (bank & 0x0f));
+    return ws_rom[(offset + romSize - (romBank << 16)) & romAddressMask];
+}
+
+/* Instruction and immediate fetches overwhelmingly come from cartridge ROM.
+ * Keep that path to one bank test plus the precomputed bank base.  RAM/SRAM
+ * execution remains valid through the general memory accessor. */
+uint8_t __not_in_flash_func(cpu_readop20)(uint32_t addr) {
+    const uint32 bank = addr >> 16;
+    if (__builtin_expect(bank >= 2 && bank < 16, 1))
+        return ws_rom[romBankBase[bank] + (addr & 0xffffu)];
+    return cpu_readmem20(addr);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -135,6 +158,7 @@ int ws_memory_init(uint8 *rom, uint32 wsRomSize) {
     sramAddressMask = sramSize ? sramSize - 1 : 0;
     externalEepromAddressMask = eepromSize ? eepromSize - 1 : 0;
     romAddressMask = romSize - 1;
+    ws_memory_update_rom_banks();
 
     if (ws_romHeader->minimumSupportSystem == WS_SYSTEM_COLOR)
         ws_gpu_operatingInColor = 1;

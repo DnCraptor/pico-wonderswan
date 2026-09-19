@@ -1,10 +1,11 @@
 #include <stdint.h>
 extern uint8_t	cpu_readport(uint8_t);
 void cpu_writeport(uint32_t,uint8_t);
-#define cpu_readop cpu_readmem20	
-#define cpu_readop_arg cpu_readmem20	
+#define cpu_readop cpu_readop20
+#define cpu_readop_arg cpu_readop20
 void cpu_writemem20(uint32_t,uint8_t);
 uint8_t cpu_readmem20(uint32_t);
+uint8_t cpu_readop20(uint32_t);
 
 typedef enum { ES, CS, SS, DS } SREGS;
 typedef enum { AW, CW, DW, BW, SP, BP, IX, IY } WREGS;

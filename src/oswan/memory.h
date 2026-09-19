@@ -23,6 +23,8 @@ extern uint8	internalRam[64 << 10];
 #endif
 
 uint8 cpu_readmem20(uint32 addr);
+uint8 cpu_readop20(uint32 addr);
+void ws_memory_rom_bank_changed(uint32 port);
 
 int		ws_memory_init(uint8 *rom, uint32 romSize);
 void	ws_memory_reset(void);

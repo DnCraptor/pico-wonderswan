@@ -17,6 +17,7 @@
 #include "initialio.h"
 #include "ieeprom.h"
 #include "gpu.h"
+#include "memory.h"
 #include "psram_spi.h"
 #include "ws_audio.h"
 
@@ -61,6 +62,7 @@ void ws_io_reset(void) {
     ws_key_y1 = ws_key_y2 = ws_key_y3 = ws_key_y4 = 0;
 
     memcpy(ws_ioRam, initialIoValue, 0x100);
+    ws_memory_rom_bank_changed(0xc0);
 
     for (int i = 0; i < 0xc9; i++)
         cpu_writeport(i, initialIoValue[i]);
@@ -319,6 +321,7 @@ void cpu_writeport(uint32_t port, uint8_t value) {
         return;
 
     ws_ioRam[port] = value;
+    ws_memory_rom_bank_changed(port);
 
     switch (port) {
         case 0x4a:
