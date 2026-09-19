@@ -23,6 +23,7 @@
 #include "io.h"
 #include "gpu.h"
 #include "graphics.h"
+#include <pico.h>   /* __not_in_flash_func */
 
 ////////////////////////////////////////////////////////////////////////////////
 //
@@ -1510,7 +1511,7 @@ void ws_gpu_refresh_palette(void) {
     }
 }
 
-void ws_gpu_write_byte(uint32_t offset, uint8_t value) {
+void __not_in_flash_func(ws_gpu_write_byte)(uint32_t offset, uint8_t value) {
     // ws 4 color tiles
     if ((offset >= 0x2000) && (offset < 0x4000)) {
         if (internalRam[offset] != value)
@@ -1560,7 +1561,7 @@ void ws_gpu_write_byte(uint32_t offset, uint8_t value) {
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-void ws_gpu_port_write(uint32_t port, uint8_t value) {
+void __not_in_flash_func(ws_gpu_port_write)(uint32_t port, uint8_t value) {
     switch (port) {
         case 0x60:
             ws_gpu_changeVideoMode(value);
@@ -1606,7 +1607,7 @@ void ws_gpu_port_write(uint32_t port, uint8_t value) {
 //
 //
 ////////////////////////////////////////////////////////////////////////////////
-uint8_t ws_gpu_port_read(uint8_t port) {
+uint8_t __not_in_flash_func(ws_gpu_port_read)(uint8_t port) {
     if (port == 0xa0) {
         if (ws_gpu_forceColorSystemBool)
             return ws_ioRam[0xa0] | 2;

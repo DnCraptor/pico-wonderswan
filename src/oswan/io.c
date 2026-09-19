@@ -18,6 +18,7 @@
 #include "ieeprom.h"
 #include "gpu.h"
 #include "memory.h"
+#include <pico.h>   /* __not_in_flash_func */
 #include "psram_spi.h"
 #include "ws_audio.h"
 
@@ -136,7 +137,7 @@ void ws_io_done(void) {
 //
 //
 ////////////////////////////////////////////////////////////////////////////////
-uint8_t cpu_readport(uint8_t port) {
+uint8_t __not_in_flash_func(cpu_readport)(uint8_t port) {
     int w1, w2;
 
     switch (port) {
@@ -314,7 +315,7 @@ uint8_t cpu_readport(uint8_t port) {
 //
 //
 ////////////////////////////////////////////////////////////////////////////////
-void cpu_writeport(uint32_t port, uint8_t value) {
+void __not_in_flash_func(cpu_writeport)(uint32_t port, uint8_t value) {
     int w1;
 
     if (ws_ioRam[port] == value && port != 0x52 && port != 0x69 && port != 0x6b)

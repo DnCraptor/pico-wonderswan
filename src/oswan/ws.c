@@ -23,6 +23,7 @@
 #include "gpu.h"
 #include "ws.h"
 #include "ws_audio.h"
+#include <pico.h>   /* __not_in_flash_func */
 
 
 //#define DEBUG
@@ -157,7 +158,7 @@ void ws_reset(void)
 ////////////////////////////////////////////////////////////////////////////////
 //#define DEBUG
 #undef DEBUG
-int ws_executeLine(uint8 *framebuffer, int renderLine)
+int __not_in_flash_func(ws_executeLine)(uint8 *framebuffer, int renderLine)
 {
 	int drawWholeScreen=0;
  
