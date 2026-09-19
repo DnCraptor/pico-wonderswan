@@ -92,6 +92,8 @@ void i2s_init(i2s_config_t *i2s_config) {
 #endif
     /* Allocate memory for the DMA buffer */
     i2s_config->dma_buf=malloc(i2s_config->dma_trans_count*sizeof(uint32_t));
+    i2s_config->dma_buf_alt=malloc(i2s_config->dma_trans_count*sizeof(uint32_t));
+    i2s_config->dma_buf_index=0;
 
     /* Direct Memory Access setup */
     i2s_config->dma_channel = dma_claim_unused_channel(true);
@@ -171,36 +173,38 @@ void i2s_write(const i2s_config_t *i2s_config,const int16_t *samples,const size_
  *     sample: pointer to an array of dma_trans_count x 32 bits samples
  */
 void i2s_dma_write(i2s_config_t *i2s_config,const int16_t *samples) {
-    /* Wait the completion of the previous DMA transfer */
-    dma_channel_wait_for_finish_blocking(i2s_config->dma_channel);
-    /* Copy samples into the DMA buffer */
+    /* Prepare the next block while the previous DMA transfer is still
+     * running.  The old single-buffer path waited for DMA completion first
+     * and only then copied 1 KiB of PCM, guaranteeing a gap at every block
+     * boundary. */
+    uint16_t *next_buf = i2s_config->dma_buf_index
+        ? i2s_config->dma_buf_alt : i2s_config->dma_buf;
 
 #ifdef AUDIO_PWM
-    /* dma_buf is deliberately a uint16_t view over dma_trans_count 32-bit
-     * DMA words. Store L/R as adjacent halfwords; DMA_SIZE_32 then writes
-     * each stereo pair to PWM CC (A in bits 15:0, B in bits 31:16).
-     * This is the proven Gamate/Watara PWM layout. */
     for (uint16_t i = 0; i < i2s_config->dma_trans_count * 2; ++i) {
-        i2s_config->dma_buf[i] =
+        next_buf[i] =
             (uint16_t)((65536 / 2 + samples[i]) >> (4 + i2s_config->volume));
     }
 #else
-
     if(i2s_config->volume==0) {
-        memcpy(i2s_config->dma_buf,samples,i2s_config->dma_trans_count*sizeof(int32_t));
+        memcpy(next_buf,samples,i2s_config->dma_trans_count*sizeof(int32_t));
     } else {
         for(uint16_t i=0;i<i2s_config->dma_trans_count*2;i++) {
-            i2s_config->dma_buf[i] = samples[i]>>i2s_config->volume;
+            next_buf[i] = samples[i]>>i2s_config->volume;
         }
     }
-#endif    
+#endif
 
-
-    /* Initiate the DMA transfer */
+    /* Only the hand-off remains on the critical boundary.  Normally the
+     * producer arrives before DMA completes, so this wait consumes the rest
+     * of the current block and the prepared block can start immediately. */
+    dma_channel_wait_for_finish_blocking(i2s_config->dma_channel);
     dma_channel_transfer_from_buffer_now(i2s_config->dma_channel,
-                                         i2s_config->dma_buf,
+                                         next_buf,
                                          i2s_config->dma_trans_count);
+    i2s_config->dma_buf_index ^= 1u;
 }
+
 
 /**
  * Adjust the output volume
