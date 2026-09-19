@@ -87,8 +87,8 @@ static size_t psram_detect_size(void) {
     return WONDERSWAN_QSPI_PSRAM_MAX_SIZE;
 }
 
-static void __no_inline_not_in_flash_func(psram_set_timing)(void) {
-    const int clock_hz = (int)clock_get_hz(clk_sys);
+static void __no_inline_not_in_flash_func(psram_set_timing)(uint32_t sys_hz) {
+    const int clock_hz = (int)sys_hz;
     const int max_psram_freq = 133 * 1000000;
     int divisor = (clock_hz + max_psram_freq - 1) / max_psram_freq;
     if (divisor == 1 && clock_hz > 100000000) divisor = 2;
@@ -130,7 +130,7 @@ bool __no_inline_not_in_flash_func(wonderswan_qspi_psram_init)(void) {
     qmi_hw->direct_tx = QMI_DIRECT_TX_NOPUSH_BITS | 0x35u;
     while (qmi_hw->direct_csr & QMI_DIRECT_CSR_BUSY_BITS) ;
 
-    psram_set_timing();
+    psram_set_timing(clock_get_hz(clk_sys));
     qmi_hw->m[1].rfmt =
         QMI_M0_RFMT_PREFIX_WIDTH_VALUE_Q << QMI_M0_RFMT_PREFIX_WIDTH_LSB |
         QMI_M0_RFMT_ADDR_WIDTH_VALUE_Q << QMI_M0_RFMT_ADDR_WIDTH_LSB |
@@ -157,6 +157,10 @@ bool __no_inline_not_in_flash_func(wonderswan_qspi_psram_init)(void) {
     return psram_available;
 }
 
+void __no_inline_not_in_flash_func(wonderswan_qspi_psram_reclock)(uint32_t sys_hz) {
+    if (psram_available) psram_set_timing(sys_hz);
+}
+
 bool wonderswan_qspi_psram_available(void) { return psram_available; }
 size_t wonderswan_qspi_psram_size(void) { return psram_size; }
 size_t wonderswan_qspi_rom_capacity(void) {
@@ -168,6 +172,7 @@ uintptr_t wonderswan_qspi_aux_base(void) {
 
 #else
 bool wonderswan_qspi_psram_init(void) { return false; }
+void wonderswan_qspi_psram_reclock(uint32_t sys_hz) { (void)sys_hz; }
 bool wonderswan_qspi_psram_available(void) { return false; }
 size_t wonderswan_qspi_psram_size(void) { return 0; }
 size_t wonderswan_qspi_rom_capacity(void) { return 0; }

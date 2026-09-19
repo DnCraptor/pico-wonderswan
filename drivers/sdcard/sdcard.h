@@ -24,4 +24,14 @@
 #define SDCARD_PIN_SPI0_MISO   16
 #endif
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+void sdcard_reclock(void);
+
+#ifdef __cplusplus
+}
+#endif
+
 #endif // _SDCARD_H_

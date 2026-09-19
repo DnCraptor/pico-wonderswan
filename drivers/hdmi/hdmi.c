@@ -555,6 +555,10 @@ static void hdmi_restore_ui_palette(void) {
 
 // Select video mode. Rebuild HDMI-only palette entries because the game
 // palette is updated at runtime while the UI uses fixed slots 200..215.
+void graphics_reclock() {
+    if (SM_video >= 0) pio_sm_set_clkdiv(PIO_VIDEO, SM_video, clock_get_hz(clk_sys) / 252000000.0f);
+}
+
 void graphics_set_mode(enum graphics_mode_t mode) {
     graphics_mode = mode;
 

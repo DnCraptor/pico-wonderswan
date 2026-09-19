@@ -182,6 +182,8 @@ void graphics_init() {
     create_dma_channel();
 }
 
+void graphics_reclock() {}
+
 void inline graphics_set_mode(const enum graphics_mode_t mode) {
     graphics_mode = -1;
     sleep_ms(16);

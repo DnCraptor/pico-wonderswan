@@ -2,6 +2,9 @@
 #include <cstring>
 #include <hardware/flash.h>
 #include <hardware/vreg.h>
+#include <hardware/clocks.h>
+#include <hardware/sync.h>
+#include <hardware/structs/qmi.h>
 #include <hardware/watchdog.h>
 #include <pico/multicore.h>
 #include <pico/stdlib.h>
@@ -13,6 +16,7 @@
 #include "ff.h"
 #include "ps2kbd_mrmltr.h"
 #include "psram_spi.h"
+#include "sdcard.h"
 #include "qspi_psram.h"
 
 extern "C" {
@@ -525,27 +529,138 @@ typedef struct __attribute__((__packed__)) {
 } MenuItem;
 
 int save_slot = 0;
-uint16_t frequencies[] = { 378, 396, 404, 408, 412, 416, 420, 424, 432, 444, 460 };
+uint16_t frequencies[] = { 378, 396, 404, 408, 412, 416, 420, 424, 432, 444, 460, 504, 524, 528 };
+uint8_t voltage_index = 0; // Auto, 1.50V, 1.60V, 1.65V, 1.70V
+static volatile bool runtime_drivers_ready = false;
 #if PICO_RP2040
 uint8_t frequency_index = 0;
 #else
 uint8_t frequency_index = 0;
 #endif
 
+static enum vreg_voltage selected_voltage(uint16_t mhz) {
+    switch (voltage_index) {
+        case 1: return VREG_VOLTAGE_1_50;
+        case 2: return VREG_VOLTAGE_1_60;
+        case 3: return VREG_VOLTAGE_1_65;
+        case 4: return VREG_VOLTAGE_1_70;
+        default:
+            if (mhz > 504) return VREG_VOLTAGE_1_65;
+            if (mhz >= 378) return VREG_VOLTAGE_1_60;
+            return VREG_VOLTAGE_1_50;
+    }
+}
+
+#if PICO_RP2350
+static void __no_inline_not_in_flash_func(set_flash_timing_for_clock)(uint32_t sys_hz) {
+    const uint32_t max_flash_hz = 133000000u;
+    uint32_t divisor = (sys_hz + max_flash_hz - (max_flash_hz >> 4) - 1) / max_flash_hz;
+    if (divisor == 1 && sys_hz >= 166000000u) divisor = 2;
+    uint32_t rxdelay = divisor;
+    if (sys_hz / divisor > 100000000u && sys_hz >= 166000000u) ++rxdelay;
+    qmi_hw->m[0].timing = 0x60007000u |
+        (rxdelay << QMI_M0_TIMING_RXDELAY_LSB) |
+        (divisor << QMI_M0_TIMING_CLKDIV_LSB);
+}
+#endif
+
+static bool __no_inline_not_in_flash_func(set_target_sys_clock)(uint32_t target_khz) {
+    if (set_sys_clock_khz(target_khz, false)) return true;
+#if PICO_RP2350
+    /* 526 MHz is not an integer-PLL result with the normal 12 MHz reference.
+       Run PLL_SYS at 528 MHz (1584/3) and use RP2350's fractional clk_sys divider. */
+    if (target_khz == 526000u) {
+        const uint32_t pll_hz = 528000000u;
+        set_sys_clock_pll(1584000000u, 3, 1);
+        return clock_configure(clk_sys,
+            CLOCKS_CLK_SYS_CTRL_SRC_VALUE_CLKSRC_CLK_SYS_AUX,
+            CLOCKS_CLK_SYS_CTRL_AUXSRC_VALUE_CLKSRC_PLL_SYS,
+            pll_hz, target_khz * 1000u);
+    }
+#endif
+    return false;
+}
+
+static void reclock_drivers(void) {
+    i2s_reclock(&i2s_config);
+    graphics_reclock();
+    ps2kbd.reclock();
+    nespad_reclock(clock_get_hz(clk_sys) / 1000);
+    psram_reclock();
+    sdcard_reclock();
+}
+
 bool overclock() {
+    const uint32_t target_khz = (uint32_t)frequencies[frequency_index] * 1000u;
 #if PICO_RP2040
     hw_set_bits(&vreg_and_chip_reset_hw->vreg, VREG_AND_CHIP_RESET_VREG_VSEL_BITS);
     sleep_ms(10);
+    const bool res = set_sys_clock_khz(target_khz, true);
+    if (runtime_drivers_ready) reclock_drivers();
     graphics_set_mode(TEXTMODE_DEFAULT);
-    return set_sys_clock_khz(frequencies[frequency_index] * KHZ, true);
+    return res;
 #else
-    volatile uint32_t *qmi_m0_timing=(uint32_t *)0x400d000c;
-    vreg_disable_voltage_limit();
-    vreg_set_voltage(VREG_VOLTAGE_1_60);
-    sleep_ms(33);
-    *qmi_m0_timing = 0x60007204;
-    bool res = set_sys_clock_khz(frequencies[frequency_index] * KHZ, 0);
-    *qmi_m0_timing = 0x60007303;
+    /*
+     * Keep the proven boot clock sequence intact. At this point core 1 and the
+     * video/audio/PIO drivers do not exist yet, so runtime reclocking is both
+     * unnecessary and unsafe. In particular, these QMI timings are the values
+     * used by the working pre-runtime-reclock implementation.
+     */
+    if (!runtime_drivers_ready) {
+        volatile uint32_t *qmi_m0_timing = (uint32_t *)0x400d000c;
+        vreg_disable_voltage_limit();
+        vreg_set_voltage(VREG_VOLTAGE_1_60);
+        sleep_ms(33);
+        *qmi_m0_timing = 0x60007204;
+        const bool res = set_sys_clock_khz(target_khz, false);
+        *qmi_m0_timing = 0x60007303;
+        graphics_set_mode(TEXTMODE_DEFAULT);
+        return res;
+    }
+
+    const uint32_t current_hz = clock_get_hz(clk_sys);
+    const uint32_t target_hz = target_khz * 1000u;
+    const bool raising = target_hz > current_hz;
+    const enum vreg_voltage target_voltage = selected_voltage(frequencies[frequency_index]);
+
+    if (target_hz == current_hz) {
+        vreg_disable_voltage_limit();
+        vreg_set_voltage(target_voltage);
+        return true;
+    }
+
+    if (raising) {
+        vreg_disable_voltage_limit();
+        vreg_set_voltage(target_voltage);
+        sleep_ms(50);
+    }
+
+    const uint32_t irq_state = save_and_disable_interrupts();
+    if (runtime_drivers_ready) multicore_lockout_start_blocking();
+
+    if (raising) {
+        set_flash_timing_for_clock(target_hz);
+        wonderswan_qspi_psram_reclock(target_hz);
+    }
+
+    const bool res = set_target_sys_clock(target_khz);
+
+    if (!raising && res) {
+        set_flash_timing_for_clock(target_hz);
+        wonderswan_qspi_psram_reclock(target_hz);
+    }
+
+    if (runtime_drivers_ready) {
+        reclock_drivers();
+        multicore_lockout_end_blocking();
+    }
+    restore_interrupts(irq_state);
+
+    if (!raising && res) {
+        sleep_ms(10);
+        vreg_disable_voltage_limit();
+        vreg_set_voltage(target_voltage);
+    }
     graphics_set_mode(TEXTMODE_DEFAULT);
     return res;
 #endif
@@ -650,8 +765,11 @@ const MenuItem menu_items[] = {
 #endif
         {
                 "Overclocking: %s MHz", ARRAY, &frequency_index, &overclock, count_of(frequencies) - 1,
-                { "378", "396", "404", "408", "412", "416", "420", "424", "432", "444", "460" }
+                { "378", "396", "404", "408", "412", "416", "420", "424", "432", "444", "460", "504", "524", "528" }
         },
+#if PICO_RP2350
+        { "Voltage: %s", ARRAY, &voltage_index, &overclock, 4, { "Auto", "1.50V", "1.60V", "1.65V", "1.70V" } },
+#endif
         { "Press START / Enter to apply", NONE },
         { "Reset to ROM select", ROM_SELECT },
         { "Return to game", RETURN }
@@ -785,6 +903,7 @@ void __time_critical_func(render_core)() {
 
     graphics_set_flashmode(true, true);
     sem_acquire_blocking(&vga_start_semaphore);
+    runtime_drivers_ready = true;
 
     // 60 FPS loop
 #define frame_tick (16666)

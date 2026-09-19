@@ -54,7 +54,10 @@
 #define CLK_FAST	(30 * MHZ)
 
 static volatile
-DSTATUS Stat = STA_NOINIT;	/* Physical drive status */
+DSTATUS Stat = STA_NOINIT;
+#ifdef SDCARD_PIO
+static uint32_t sd_pio_init_sys_hz;
+#endif	/* Physical drive status */
 
 static
 BYTE CardType;			/* Card type flags */
@@ -156,6 +159,7 @@ void init_spi(void)
 		SPI_MSB_FIRST /* order */
 	);
 #else
+    sd_pio_init_sys_hz = clock_get_hz(clk_sys);
     gpio_set_dir(SDCARD_PIN_SPI0_SCK, GPIO_OUT);
     gpio_set_dir(SDCARD_PIN_SPI0_MISO, GPIO_OUT);
     gpio_set_dir(SDCARD_PIN_SPI0_MOSI, GPIO_OUT);
@@ -174,6 +178,15 @@ void init_spi(void)
 				SDCARD_PIN_SPI0_MOSI,
 				SDCARD_PIN_SPI0_MISO
 	);
+#endif
+}
+
+void sdcard_reclock(void) {
+#ifdef SDCARD_PIO
+    if (sd_pio_init_sys_hz) {
+        pio_sm_set_clkdiv(pio_spi.pio, pio_spi.sm,
+            3.0f * (float)clock_get_hz(clk_sys) / (float)sd_pio_init_sys_hz);
+    }
 #endif
 }
 

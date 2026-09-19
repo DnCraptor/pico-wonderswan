@@ -321,6 +321,10 @@ void __time_critical_func() dma_handler_VGA() {
     dma_channel_set_read_addr(dma_chan_ctrl, output_buffer, false);
 }
 
+void graphics_reclock() {
+    if (_SM_VGA >= 0) pio_sm_set_clkdiv(PIO_VGA, _SM_VGA, clock_get_hz(clk_sys) / 25175000.0f);
+}
+
 void graphics_set_mode(enum graphics_mode_t mode) {
     switch (mode) {
         case TEXTMODE_53x30:

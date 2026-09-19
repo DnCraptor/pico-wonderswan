@@ -1229,6 +1229,11 @@ void clrScr(const uint8_t color) {
         memset(text_buffer, 0, TEXTMODE_COLS * TEXTMODE_ROWS * 2);
 }
 
+void graphics_reclock() {
+    double color_freq = (tv_out_mode.c_freq == _4433619) ? 4.43361875e6 : 3.579545e6;
+    if (SM_video >= 0) pio_sm_set_clkdiv(PIO_VIDEO, SM_video, clock_get_hz(clk_sys) / (color_freq * 4));
+}
+
 void graphics_set_mode(const enum graphics_mode_t mode) {
     tv_out_mode.mode_bpp = mode;
     tv_out_mode.color_index = TEXTMODE_DEFAULT == mode ? 0.0 : 1.0;

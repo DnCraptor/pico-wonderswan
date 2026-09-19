@@ -72,6 +72,11 @@ bool nespad_begin(uint32_t cpu_khz, uint8_t clkPin, uint8_t dataPin,uint8_t latP
 
 
 
+void nespad_reclock(uint32_t cpu_khz) {
+  if (sm < 0) return;
+  pio_sm_set_clkdiv_int_frac(pio, sm, cpu_khz / 1000, 0);
+}
+
 // nespad read. Ideally should be called ~100 uS after
 // nespad_read_start(), but can be sooner (will block until ready), or later
 // (will introduce latency). Sets value of global nespad_state variable, a

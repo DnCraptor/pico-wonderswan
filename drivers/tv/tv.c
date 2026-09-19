@@ -890,6 +890,10 @@ void clrScr(const uint8_t color) {
 }
 
 
+void graphics_reclock() {
+    if (SM_video >= 0) pio_sm_set_clkdiv(PIO_VIDEO, SM_video, clock_get_hz(clk_sys) / (2 * v_mode.CLK_SPD));
+}
+
 void graphics_set_mode(const enum graphics_mode_t mode) {
     graphics_mode = mode;
     clrScr(0);

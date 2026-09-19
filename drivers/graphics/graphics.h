@@ -48,6 +48,7 @@ enum graphics_mode_t {
 extern uint8_t* text_buffer;
 
 void graphics_init();
+void graphics_reclock();
 
 void graphics_set_mode(enum graphics_mode_t mode);
 

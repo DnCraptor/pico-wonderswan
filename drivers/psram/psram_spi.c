@@ -1,4 +1,5 @@
 #include "psram_spi.h"
+#include "hardware/clocks.h"
 
 #if PICO_RP2350
 extern bool wonderswan_qspi_psram_available(void);
@@ -9,6 +10,7 @@ static inline volatile uint8_t *qspi_aux_ptr(uint32_t addr) {
 #endif
 
 static psram_spi_inst_t psram_spi;
+static uint32_t psram_init_sys_hz;
 
 #define ITE_PSRAM (1ul << 20)
 #define MAX_PSRAM (512ul << 20)
@@ -41,6 +43,7 @@ uint32_t psram_size() {
 }
 
 uint32_t init_psram() {
+    psram_init_sys_hz = clock_get_hz(clk_sys);
 #if PICO_RP2350
     if (wonderswan_qspi_psram_available()) return 2u << 20;
 #endif
@@ -49,6 +52,16 @@ uint32_t init_psram() {
         psram_spi = psram_spi_init_clkdiv(pio0, -1, 2.0, true);
     }
     return psram_size();
+}
+
+void psram_reclock() {
+#if PICO_RP2350
+    if (wonderswan_qspi_psram_available()) return;
+#endif
+    if (psram_init_sys_hz && psram_spi.sm >= 0) {
+        pio_sm_set_clkdiv(psram_spi.pio, psram_spi.sm,
+            2.0f * (float)clock_get_hz(clk_sys) / (float)psram_init_sys_hz);
+    }
 }
 
 void psram_cleanup() {

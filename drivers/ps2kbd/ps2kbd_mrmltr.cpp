@@ -375,6 +375,11 @@ void Ps2Kbd_Mrmltr::tick() {
   }
 }
 
+void Ps2Kbd_Mrmltr::reclock() {
+    const float div = (float)clock_get_hz(clk_sys) / (8 * 16700);
+    pio_sm_set_clkdiv(_pio, _sm, div);
+}
+
 // TODO Error checking and reporting
 void Ps2Kbd_Mrmltr::init_gpio() {
     // init KBD pins to input

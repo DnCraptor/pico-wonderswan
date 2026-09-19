@@ -138,6 +138,19 @@ void i2s_init(i2s_config_t *i2s_config) {
     pio_sm_set_enabled(i2s_config->pio, i2s_config->sm , true);
 }
 
+void i2s_reclock(i2s_config_t *i2s_config) {
+#ifdef AUDIO_PWM
+    const uint slice_num = pwm_gpio_to_slice_num(PWM_PIN0);
+    pwm_set_wrap(slice_num, clock_get_hz(clk_sys) / i2s_config->sample_freq);
+#else
+    uint32_t divider = clock_get_hz(clk_sys) * 4 / i2s_config->sample_freq;
+#ifdef I2S_CS4334
+    divider >>= 3;
+#endif
+    pio_sm_set_clkdiv_int_frac(i2s_config->pio, i2s_config->sm, divider >> 8u, divider & 0xffu);
+#endif
+}
+
 /**
  * Write samples to I2S directly and wait for completion (blocking)
  * i2s_config: I2S context obtained by i2s_get_default_config()

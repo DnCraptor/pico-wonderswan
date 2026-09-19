@@ -18,6 +18,7 @@ bool wonderswan_qspi_psram_available(void);
 size_t wonderswan_qspi_psram_size(void);
 size_t wonderswan_qspi_rom_capacity(void);
 uintptr_t wonderswan_qspi_aux_base(void);
+void wonderswan_qspi_psram_reclock(uint32_t sys_hz);
 
 #ifdef __cplusplus
 }
