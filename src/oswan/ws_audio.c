@@ -27,6 +27,63 @@ static uint32 sample_accum;
 static int16 pcm[WS_AUDIO_BLOCK * 2];
 static uint16 pcm_frames;
 
+/* WonderSwan Color Hyper Voice (ports 64h..6Bh).  The fifth channel is a
+ * signed 16-bit stereo path mixed after the four legacy channels. */
+static int16 hyper_left;
+static int16 hyper_right;
+static uint8 hyper_input;
+static uint8 hyper_control;
+static uint8 hyper_channel_control;
+static uint8 hyper_dma_left;
+static uint8 hyper_manual_left;
+
+static int16 hyper_expand(uint8 value) {
+    const unsigned shift = hyper_control & 3;
+    int32 sample;
+
+    switch ((hyper_control >> 2) & 3) {
+        case 0:
+            sample = (int32)value << (8 - shift);
+            break;
+        case 1:
+            sample = ((int32)value - 256) << (8 - shift);
+            break;
+        case 2:
+            sample = (int32)(int8)value << (8 - shift);
+            break;
+        default:
+            /* Extension mode 3 ignores the volume/shift bits. */
+            sample = (int32)value << 8;
+            break;
+    }
+    return (int16)(uint16)sample;
+}
+
+static void hyper_latch_input(uint8 value, int from_dma) {
+    hyper_input = value;
+    if (from_dma) {
+        const uint8 mode = (hyper_channel_control >> 5) & 3;
+        if (mode == 0) {
+            /* Stereo DMA alternates left/right. */
+            if (hyper_dma_left) hyper_left = hyper_expand(value);
+            else                hyper_right = hyper_expand(value);
+            hyper_dma_left ^= 1;
+        } else if (mode == 1) {
+            hyper_left = hyper_expand(value);
+        } else if (mode == 2) {
+            hyper_right = hyper_expand(value);
+        } else {
+            const int16 sample = hyper_expand(value);
+            hyper_left = hyper_right = sample;
+        }
+    } else {
+        /* Manual writes to 69h always alternate as stereo. */
+        if (hyper_manual_left) hyper_left = hyper_expand(value);
+        else                   hyper_right = hyper_expand(value);
+        hyper_manual_left ^= 1;
+    }
+}
+
 /* WonderSwan Color sound DMA (ports 4Ah..52h). The hardware clocks one
  * byte at 4/6/12/24 kHz from the 3.072 MHz CPU domain. */
 static uint32 sound_dma_source;
@@ -41,7 +98,8 @@ static const uint16 sound_dma_period[4] = { 768, 512, 256, 128 };
 static void sound_dma_tick(void) {
     if (!(sound_dma_control & 0x80)) return;
     if (sound_dma_control & 0x04) {
-        if (!(sound_dma_control & 0x10)) ws_audio_port_write(0x89, 0);
+        if (sound_dma_control & 0x10) hyper_latch_input(0, 1);
+        else ws_audio_port_write(0x89, 0);
         return;
     }
     if (!sound_dma_size) {
@@ -49,8 +107,8 @@ static void sound_dma_tick(void) {
         return;
     }
     const uint8 sample = cpu_readmem20(sound_dma_source);
-    /* Target 0 is channel 2 voice mode. Hyper voice is not in stage-1 APU. */
-    if (!(sound_dma_control & 0x10)) ws_audio_port_write(0x89, sample);
+    if (sound_dma_control & 0x10) hyper_latch_input(sample, 1);
+    else ws_audio_port_write(0x89, sample);
     sound_dma_size--;
     sound_dma_source = (sound_dma_source + ((sound_dma_control & 0x40) ? 0xfffffu : 1u)) & 0xfffffu;
     if (!sound_dma_size) {
@@ -147,10 +205,16 @@ static void emit_sample(void) {
         right += s * (volume[ch] & 0x0f);
     }
 
-    // Four wavetable channels peak at about +/-480.  A factor of 48 leaves
-    // headroom for direct D/A while using most of the signed 16-bit range.
-    pcm[pcm_frames * 2 + 0] = clamp16(left * 48);
-    pcm[pcm_frames * 2 + 1] = clamp16(right * 48);
+    // Four wavetable channels peak at about +/-480.  Hyper Voice is already
+    // signed 16-bit PCM and is mixed after the legacy four-channel path.
+    int32 out_left = left * 48;
+    int32 out_right = right * 48;
+    if (hyper_control & 0x80) {
+        out_left += hyper_left;
+        out_right += hyper_right;
+    }
+    pcm[pcm_frames * 2 + 0] = clamp16(out_left);
+    pcm[pcm_frames * 2 + 1] = clamp16(out_right);
     if (++pcm_frames == WS_AUDIO_BLOCK) {
         i2s_dma_write(&i2s_config, pcm);
         pcm_frames = 0;
@@ -175,6 +239,9 @@ void ws_audio_reset(void) {
     sweep_counter = 1;
     sample_accum = 0;
     pcm_frames = 0;
+    hyper_left = hyper_right = 0;
+    hyper_input = hyper_control = hyper_channel_control = 0;
+    hyper_dma_left = hyper_manual_left = 1;
     sound_dma_source = sound_dma_source_reload = 0;
     sound_dma_size = sound_dma_size_reload = 0;
     sound_dma_control = 0;
@@ -225,6 +292,48 @@ void ws_audio_process(uint32 cycles) {
             sample_accum -= WS_AUDIO_CLOCK;
             emit_sample();
         }
+    }
+}
+
+uint8 ws_audio_hyper_port_read(uint32 port) {
+    switch (port) {
+        case 0x64: return (uint8)hyper_left;
+        case 0x65: return (uint8)((uint16)hyper_left >> 8);
+        case 0x66: return (uint8)hyper_right;
+        case 0x67: return (uint8)((uint16)hyper_right >> 8);
+        case 0x69: return hyper_input;
+        case 0x6a: return hyper_control;
+        case 0x6b: return hyper_channel_control;
+        default: return 0xff;
+    }
+}
+
+void ws_audio_hyper_port_write(uint32 port, uint8 value) {
+    switch (port) {
+        case 0x64:
+            hyper_left = (int16)(((uint16)hyper_left & 0xff00u) | value);
+            break;
+        case 0x65:
+            hyper_left = (int16)(((uint16)value << 8) | ((uint16)hyper_left & 0x00ffu));
+            break;
+        case 0x66:
+            hyper_right = (int16)(((uint16)hyper_right & 0xff00u) | value);
+            break;
+        case 0x67:
+            hyper_right = (int16)(((uint16)value << 8) | ((uint16)hyper_right & 0x00ffu));
+            break;
+        case 0x69:
+            hyper_latch_input(value, 0);
+            break;
+        case 0x6a:
+            hyper_control = value;
+            break;
+        case 0x6b:
+            hyper_channel_control = value & 0x6f;
+            if (value & 0x10) hyper_dma_left = 1;
+            break;
+        default:
+            break;
     }
 }
 
