@@ -99,7 +99,9 @@ enum rotation_mode_t : uint8_t {
 static uint8_t rotation_mode = ROTATION_AUTO;
 static bool manual_portrait = false;
 static bool rotation_hotkey_override = false;
-static bool keyboard_y1 = false, keyboard_y2 = false, keyboard_y3 = false, keyboard_y4 = false;
+static bool keyboard_1 = false, keyboard_2 = false, keyboard_3 = false, keyboard_4 = false;
+static bool keyboard_o = false, keyboard_p = false, keyboard_l = false, keyboard_semicolon = false;
+static bool keyboard_9 = false, keyboard_0 = false;
 
 static bool portrait_enabled() {
     bool portrait;
@@ -132,13 +134,8 @@ extern	uint8	ws_key_y1, ws_key_y2, ws_key_y3, ws_key_y4;
 static void nespad_tick() {
     nespad_read();
 
-    if (swap_ab) {
-        gamepad1_bits.b = keyboard_bits.a || (nespad_state & DPAD_A) != 0;
-        gamepad1_bits.a = keyboard_bits.b || (nespad_state & DPAD_B) != 0;
-    } else {
-        gamepad1_bits.a = keyboard_bits.a || (nespad_state & DPAD_A) != 0;
-        gamepad1_bits.b = keyboard_bits.b || (nespad_state & DPAD_B) != 0;
-    }
+    gamepad1_bits.a = (nespad_state & DPAD_A) != 0;
+    gamepad1_bits.b = (nespad_state & DPAD_B) != 0;
 
     gamepad1_bits.select = keyboard_bits.select || (nespad_state & DPAD_SELECT) != 0;
     gamepad1_bits.start = keyboard_bits.start || (nespad_state & DPAD_START) != 0;
@@ -170,14 +167,21 @@ void process_kbd_report(hid_keyboard_report_t const* report, hid_keyboard_report
     keyboard_bits.start = isInReport(report, HID_KEY_ENTER) || isInReport(report, HID_KEY_KEYPAD_ENTER);
     keyboard_bits.select = isInReport(report, HID_KEY_BACKSPACE) || isInReport(report, HID_KEY_ESCAPE) || isInReport(report, HID_KEY_KEYPAD_ADD);
 
-    keyboard_bits.b = isInReport(report, HID_KEY_Z) || isInReport(report, HID_KEY_KEYPAD_0);
-    keyboard_bits.a = isInReport(report, HID_KEY_X) || isInReport(report, HID_KEY_KEYPAD_DECIMAL);
+    // A/B keyboard bindings depend on presentation orientation and are
+    // resolved in the emulation loop together with the native X/Y groups.
+    keyboard_bits.b = isInReport(report, HID_KEY_Z);
+    keyboard_bits.a = isInReport(report, HID_KEY_X);
 
-    // WonderSwan has two independent four-button cursor groups.
-    keyboard_y1 = isInReport(report, HID_KEY_O);
-    keyboard_y2 = isInReport(report, HID_KEY_P);
-    keyboard_y3 = isInReport(report, HID_KEY_K);
-    keyboard_y4 = isInReport(report, HID_KEY_L);
+    keyboard_o = isInReport(report, HID_KEY_O);
+    keyboard_p = isInReport(report, HID_KEY_P);
+    keyboard_l = isInReport(report, HID_KEY_L);
+    keyboard_semicolon = isInReport(report, HID_KEY_SEMICOLON);
+    keyboard_9 = isInReport(report, HID_KEY_9);
+    keyboard_0 = isInReport(report, HID_KEY_0);
+    keyboard_1 = isInReport(report, HID_KEY_1);
+    keyboard_2 = isInReport(report, HID_KEY_2);
+    keyboard_3 = isInReport(report, HID_KEY_3);
+    keyboard_4 = isInReport(report, HID_KEY_4);
 
     bool b7 = isInReport(report, HID_KEY_KEYPAD_7);
     bool b9 = isInReport(report, HID_KEY_KEYPAD_9);
@@ -834,13 +838,15 @@ const MenuItem menu_items[] = {
 //        {},
 //        { "Save state: %i", INT, &save_slot, &save, 5 },
 //        { "Load state: %i", INT, &save_slot, &load, 5 },
-        { "Palette: %s", ARRAY, &palette_index, nullptr, 2,
-          {
-                  "default",
-                  "amber  ",
-                  "green  "
-          }
-        },
+        // Palette selection is hidden until WonderSwan colour handling is
+        // accurate enough for UAT. Keep the implementation for later work.
+//        { "Palette: %s", ARRAY, &palette_index, nullptr, 2,
+//          {
+//                  "default",
+//                  "amber  ",
+//                  "green  "
+//          }
+//        },
         {},
 #if SOFTTV
         { "TV system %s", ARRAY, &tv_out_mode.tv_system, nullptr, 1, { "PAL ", "NTSC" } },
@@ -1093,8 +1099,6 @@ int main() {
 #endif
         while (!reboot) {
             ws_key_start = gamepad1_bits.start;
-            ws_key_button_1 = gamepad1_bits.a;
-            ws_key_button_2 = gamepad1_bits.b;
 
             ws_key_up = gamepad1_bits.up;
             ws_key_down = gamepad1_bits.down;
@@ -1105,7 +1109,7 @@ int main() {
                 menu();
             }
 
-            // WonderSwan has no Select button.  NES Select / keyboard
+            // WonderSwan has no Select button. NES Select / keyboard
             // Backspace is an emulator hotkey that flips the presentation.
             if (!gamepad1_bits.start && gamepad1_bits.select && !select_pressed_last_frame)
                 rotation_hotkey_override = !rotation_hotkey_override;
@@ -1113,33 +1117,50 @@ int main() {
 
             portrait = portrait_enabled();
 
-            // Keep the physical keyboard layout stable in both orientations:
-            // WASD/arrows are movement, O/P/K/L are the four secondary action
-            // keys. WonderSwan swaps which native cursor group fulfils those
-            // roles when the console is rotated.
             const bool move_up    = keyboard_bits.up    || (nespad_state & DPAD_UP);
             const bool move_right = keyboard_bits.right || (nespad_state & DPAD_RIGHT);
             const bool move_down  = keyboard_bits.down  || (nespad_state & DPAD_DOWN);
             const bool move_left  = keyboard_bits.left  || (nespad_state & DPAD_LEFT);
 
+            bool key_b;
+            bool key_a;
             if (!portrait) {
+                // Landscape: X is the movement cross, Y is available on 1..4.
                 ws_key_x1 = move_up;
                 ws_key_x2 = move_right;
                 ws_key_x3 = move_down;
                 ws_key_x4 = move_left;
-                ws_key_y1 = keyboard_y1; // O
-                ws_key_y2 = keyboard_y2; // P
-                ws_key_y3 = keyboard_y3; // K
-                ws_key_y4 = keyboard_y4; // L
+                ws_key_y1 = keyboard_1;
+                ws_key_y2 = keyboard_4;
+                ws_key_y3 = keyboard_2;
+                ws_key_y4 = keyboard_3;
+
+                key_b = keyboard_o || keyboard_bits.b;       // O / Z
+                key_a = keyboard_p || keyboard_bits.a;       // P / X
             } else {
-                ws_key_y1 = move_up;
-                ws_key_y2 = move_right;
-                ws_key_y3 = move_down;
-                ws_key_y4 = move_left;
-                ws_key_x1 = keyboard_y1; // O
-                ws_key_x2 = keyboard_y2; // P
-                ws_key_x3 = keyboard_y3; // K
-                ws_key_x4 = keyboard_y4; // L
+                // Portrait follows the physical WonderSwan layout requested
+                // by UAT rather than merely rotating the landscape mapping.
+                ws_key_y1 = move_left;
+                ws_key_y2 = move_up;
+                ws_key_y3 = move_right;
+                ws_key_y4 = move_down;
+                ws_key_x1 = keyboard_o;
+                ws_key_x2 = keyboard_p;
+                ws_key_x3 = keyboard_semicolon || keyboard_bits.a; // ; / X
+                ws_key_x4 = keyboard_l || keyboard_bits.b;         // L / Z
+
+                key_b = keyboard_l || keyboard_bits.b || keyboard_9;
+                key_a = keyboard_semicolon || keyboard_bits.a || keyboard_0;
+            }
+
+            // Swap only the physical A/B pair and keyboard keys currently
+            // assigned to that pair. Native X/Y cursor mappings are untouched.
+            if (swap_ab) {
+                ws_key_button_1 = gamepad1_bits.b || key_b;
+                ws_key_button_2 = gamepad1_bits.a || key_a;
+            } else {
+                ws_key_button_1 = gamepad1_bits.a || key_a;
+                ws_key_button_2 = gamepad1_bits.b || key_b;
             }
             // Center the native image in the 320x240 VGA viewport. Landscape
             // is 224x144 -> (48,48); portrait is 144x224 -> (88,8).
