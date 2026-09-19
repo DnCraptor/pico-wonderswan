@@ -10,6 +10,7 @@
 //////////////////////////////////////////////////////////////////////////////
 
 #include <string.h>
+#include <pico.h>
 #include <io.h>
 #include "rom.h"
 #include "./nec/nec.h"
@@ -54,7 +55,7 @@ static uint32 romSize;
 //
 //
 ////////////////////////////////////////////////////////////////////////////////
-void cpu_writemem20(uint32_t addr, uint8_t value) {
+void __not_in_flash_func(cpu_writemem20)(uint32_t addr, uint8_t value) {
     uint32 offset = addr & 0xffff;
     uint32 bank = addr >> 16;
 
@@ -82,7 +83,7 @@ void cpu_writemem20(uint32_t addr, uint8_t value) {
 //
 //
 ////////////////////////////////////////////////////////////////////////////////
-uint8_t cpu_readmem20(uint32_t addr) {
+uint8_t __not_in_flash_func(cpu_readmem20)(uint32_t addr) {
     uint32 offset = addr & 0xffff;
     uint32 bank = addr >> 16;
 

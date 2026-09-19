@@ -1,3 +1,4 @@
+#include <pico.h>
 #include <string.h>
 #include "ws_audio.h"
 #include "memory.h"
@@ -115,7 +116,7 @@ static int32 sound_dma_counter;
 
 static const uint16 sound_dma_period[4] = { 768, 512, 256, 128 };
 
-static void sound_dma_tick(void) {
+static void __not_in_flash_func(sound_dma_tick)(void) {
     if (!(sound_dma_control & 0x80)) return;
     if (sound_dma_control & 0x04) {
         if (sound_dma_control & 0x10) hyper_latch_input(0, 1);
@@ -147,14 +148,14 @@ static int16 clamp16(int32 v) {
     return (int16)v;
 }
 
-static int wave_sample(unsigned ch) {
+static int __not_in_flash_func(wave_sample)(unsigned ch) {
     const uint32 a = ((uint32)sample_ram_pos << 6) +
                      ((uint32)ch << 4) + (sample_pos[ch] >> 1);
     const uint8 b = internalRam[a & 0xffffu];
     return (b >> ((sample_pos[ch] & 1u) ? 4 : 0)) & 0x0f;
 }
 
-static void advance_channel(unsigned ch, uint32 cycles) {
+static void __not_in_flash_func(advance_channel)(unsigned ch, uint32 cycles) {
     if (!(control & (1u << ch))) return;
 
     if (ch == 1 && (control & 0x20))
@@ -201,7 +202,7 @@ static void advance_channel(unsigned ch, uint32 cycles) {
     }
 }
 
-static int32 dc_block(unsigned ch, int32 input) {
+static int32 __not_in_flash_func(dc_block)(unsigned ch, int32 input) {
     /* Mednafen's reference core feeds the unsigned hardware DAC levels into
      * Blip_Buffer with a 20 Hz bass filter.  At the native 24 kHz output rate
      * this fixed-point one-pole blocker provides the same essential DC
@@ -213,7 +214,7 @@ static int32 dc_block(unsigned ch, int32 input) {
     return output;
 }
 
-static void emit_sample(void) {
+static void __not_in_flash_func(emit_sample)(void) {
     uint32 left = 0, right = 0;
 
     for (unsigned ch = 0; ch < 4; ++ch) {
@@ -293,7 +294,7 @@ void ws_audio_reset(void) {
     for (unsigned ch = 0; ch < 4; ++ch) period_counter[ch] = 1;
 }
 
-void ws_audio_process(uint32 cycles) {
+void __not_in_flash_func(ws_audio_process)(uint32 cycles) {
     /* ws_executeLine() feeds us roughly half a scanline at a time.  Do not
      * advance the APU by the whole chunk and then emit all crossed samples:
      * that quantizes a 24 kHz output edge to ~128 CPU cycles and is audible
@@ -337,7 +338,7 @@ void ws_audio_process(uint32 cycles) {
     }
 }
 
-void ws_audio_sync(void) {
+void __not_in_flash_func(ws_audio_sync)(void) {
     const uint32 now = nec_get_clock();
     const uint32 elapsed = now - audio_cpu_clock;
     if (elapsed) {

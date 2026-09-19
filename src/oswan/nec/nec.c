@@ -30,6 +30,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <pico.h>
 
 #define UINT8 unsigned char
 #define UINT16 unsigned short
@@ -181,7 +182,7 @@ static void nec_interrupt(unsigned int_num, uint8_t md_flag)
 /*                             OPCODES                                      */
 /****************************************************************************/
 
-#define OP(num,func_name) static void func_name(void)
+#define OP(num,func_name) static void __not_in_flash_func(func_name)(void)
 
 
 OP( 0x00, i_add_br8  ) { DEF_br8;	ADDB;	PutbackRMByte(ModRM,dst);	CLKM(3,1);	 	}
@@ -925,7 +926,7 @@ void nec_set_reg(int regnum, unsigned val)
     }
 }
 
-int nec_execute(int cycles)
+int __not_in_flash_func(nec_execute)(int cycles)
 {
 	
 	nec_ICount=cycles;
