@@ -194,8 +194,12 @@ pgDebug(buf, 3);
 	   if (renderLine)
 		   ws_gpu_renderScanline(framebuffer);
 
+		if (ws_gpu_scanline == 142)
+			ws_gpu_latchSprites();
+
 		ws_gpu_scanline++;
 		if(ws_gpu_scanline==144) {
+			ws_gpu_swapSpriteTable();
 			drawWholeScreen=1;
 //			renderer_update_sound();
 //			render_screen();

@@ -29,6 +29,8 @@ void ws_gpu_init(void);
 void ws_gpu_done(void);
 void ws_gpu_reset(void);
 void ws_gpu_renderScanline(uint8 *framebufferPtr);
+void ws_gpu_latchSprites(void);
+void ws_gpu_swapSpriteTable(void);
 void ws_gpu_changeVideoMode(uint8 value);
 void ws_gpu_write_byte(uint32_t offset, uint8_t value);
 void ws_gpu_refresh_palette(void);

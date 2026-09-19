@@ -85,6 +85,11 @@ extern uint8 internalRam[0x10000];
 uint8 ws_gpu_operatingInColor;
 uint8 ws_videoMode;
 uint8 ws_gpu_scanline = 0;
+
+/* WonderSwan latches the sprite table near the end of the visible frame. */
+static uint32 ws_spriteTable[2][0x80];
+static uint8 ws_spriteCountCache[2];
+static uint8 ws_spriteTableActive;
 __aligned(4) int16 ws_palette[16 * 4];
 __aligned(4) int8 ws_paletteColors[8];
 __aligned(4) int16 wsc_palette[16 * 16];
@@ -349,6 +354,9 @@ void ws_gpu_reset(void) {
     memset(wsc_modified_tile, 0x01, 1024);
     //memset(ws_modified_tile, 0x01, 512);
     ws_gpu_scanline = 0;
+    memset(ws_spriteTable, 0, sizeof(ws_spriteTable));
+    ws_spriteCountCache[0] = ws_spriteCountCache[1] = 0;
+    ws_spriteTableActive = 0;
     ws_gpu_changeVideoMode(2);
 }
 
@@ -363,6 +371,24 @@ void ws_gpu_reset(void) {
 //
 //
 ////////////////////////////////////////////////////////////////////////////////
+void ws_gpu_latchSprites(void) {
+    const uint8 next = ws_spriteTableActive ^ 1u;
+    uint8 count = ws_ioRam[0x06];
+    if (count > 0x80)
+        count = 0x80;
+
+    ws_spriteCountCache[next] = count;
+    if (count) {
+        const uint32 base = ((uint32) ws_ioRam[0x04]) << 9;
+        const uint32 start = ((uint32) ws_ioRam[0x05]) << 2;
+        memcpy(ws_spriteTable[next], internalRam + base + start, ((uint32) count) << 2);
+    }
+}
+
+void ws_gpu_swapSpriteTable(void) {
+    ws_spriteTableActive ^= 1u;
+}
+
 void ws_gpu_clearCache(void) {
     memset(wsc_modified_tile, 0x01, 1024);
     //memset(ws_modified_tile, 0x01, 512);
@@ -595,51 +621,35 @@ static __always_inline uint8 *ws_tileCache_getTileRow(uint32 tileIndex, uint32 l
 //
 ////////////////////////////////////////////////////////////////////////////////
 static __always_inline void ws_drawClippedSpriteLine(uint8 *framebuffer, uint16 scanline,
-                                     uint32 x, uint32 y, uint32 tileIndex, uint32 paletteIndex,
-                                     uint32 vFlip, uint32 hFlip,
-                                     uint32 clip_x0, uint32 clip_y0, uint32 clip_x1, uint32 clip_y1) {
+                                     int x, int y, uint32 tileIndex, uint32 paletteIndex,
+                                     uint32 vFlip, uint32 hFlip, bool windowEnabled, bool outsideWindow,
+                                     int window_x0, int window_y0, int window_x1, int window_y1) {
 
-    if ((scanline < y) || (scanline > (y + 7)))
-        return;
-    if ((x + 7 < clip_x0) || (x >= clip_x1))
-        return;
-    if ((y + 7 < clip_y0) || (y >= clip_y1))
+    const int line = (int) scanline - y;
+    if ((line < 0) || (line >= 8))
         return;
 
-    uint8 *ws_tileRow = ws_tileCache_getTileRow(tileIndex, (scanline - y) & 0x07, hFlip, vFlip, 0);
-    uint16 nbPixels = 8;
-    if (x < clip_x0) {
-        ws_tileRow += clip_x0 - x;
-        nbPixels -= clip_x0 - x;
-        x = clip_x0;
-    }
-    if (x + nbPixels > clip_x1)
-        nbPixels = (clip_x1 - x);
-    framebuffer += x;
+    uint8 *ws_tileRow = ws_tileCache_getTileRow(tileIndex, line, hFlip, vFlip, 0);
 
-    if (ws_gpu_operatingInColor) {
-        while (nbPixels) {
-            if (*ws_tileRow) *framebuffer = (paletteIndex << 4) + *ws_tileRow;
-            framebuffer++;
-            ws_tileRow++;
-            nbPixels--;
+    for (int i = 0; i < 8; i++, ws_tileRow++) {
+        const int px = x + i;
+        if ((px < 0) || (px >= 224))
+            continue;
+
+        if (windowEnabled) {
+            const bool inWindow = (px >= window_x0) && (px <= window_x1) &&
+                                  ((int) scanline >= window_y0) && ((int) scanline <= window_y1);
+            if (outsideWindow ? inWindow : !inWindow)
+                continue;
         }
-    } else {
-        int16 *ws_paletteAlias = &ws_palette[paletteIndex << 2];
-        if (paletteIndex & 0x04) {
-            while (nbPixels) {
-                if (*ws_tileRow) *framebuffer = ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
-                framebuffer++;
-                ws_tileRow++;
-                nbPixels--;
-            }
+
+        if (ws_gpu_operatingInColor) {
+            if (*ws_tileRow)
+                framebuffer[px] = (paletteIndex << 4) + *ws_tileRow;
         } else {
-            while (nbPixels) {
-                *framebuffer = ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
-                framebuffer++;
-                ws_tileRow++;
-                nbPixels--;
-            }
+            int16 *ws_paletteAlias = &ws_palette[paletteIndex << 2];
+            if (*ws_tileRow || !(paletteIndex & 0x04))
+                framebuffer[px] = ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
         }
     }
 }
@@ -869,31 +879,29 @@ void ws_gpu_renderScanline(uint8 *framebuffer) {
 #endif
     // render sprites which are between both layers
     if (ws_ioRam[0x00] & 0x04) {
-        int ws_sprWindow_x0 = ws_ioRam[0x0c];
-        int ws_sprWindow_y0 = ws_ioRam[0x0d];
-        int ws_sprWindow_x1 = ws_ioRam[0x0e];
-        int ws_sprWindow_y1 = ws_ioRam[0x0f];
-        uint32 *ws_sprRamBase = (uint32 *) (internalRam + (((uint32) ws_ioRam[0x04]) << 9));
+        const int ws_sprWindow_x0 = ws_ioRam[0x0c];
+        const int ws_sprWindow_y0 = ws_ioRam[0x0d];
+        const int ws_sprWindow_x1 = ws_ioRam[0x0e];
+        const int ws_sprWindow_y1 = ws_ioRam[0x0f];
+        const bool spriteWindowEnabled = (ws_ioRam[0x00] & 0x08) != 0;
+        const int spriteCount = ws_spriteCountCache[ws_spriteTableActive];
+        const uint32 *ws_sprRamBase = ws_spriteTable[ws_spriteTableActive];
 
-        // seek to first sprite
-        ws_sprRamBase += ws_ioRam[0x06] - 1;
-
-        for (int i = ws_ioRam[0x06]; i > ws_ioRam[0x05]; i--) {
-            uint32 spr = *ws_sprRamBase--;
+        for (int i = spriteCount; i > 0; i--) {
+            const uint32 spr = ws_sprRamBase[i - 1];
 
             if (!(spr & 0x2000)) {
-                // sprite window on ?
-                if ((ws_ioRam[0x00] & 0x08) && (spr & 0x1000) && (ws_sprWindow_x0 != ws_sprWindow_x1)) {
-                    ws_drawClippedSpriteLine(framebuffer, ws_gpu_scanline, (spr & 0xff000000) >> 24,
-                                             (spr & 0x00ff0000) >> 16,
-                                             spr & 0x1ff, 8 + ((spr & 0xe00) >> 9), spr & 0x4000, spr & 0x8000,
-                                             ws_sprWindow_x0, ws_sprWindow_y0, ws_sprWindow_x1, ws_sprWindow_y1);
-                } else {
-                    ws_drawClippedSpriteLine(framebuffer, ws_gpu_scanline, (spr & 0xff000000) >> 24,
-                                             (spr & 0x00ff0000) >> 16,
-                                             spr & 0x1ff, 8 + ((spr & 0xe00) >> 9), spr & 0x4000, spr & 0x8000,
-                                             0, 0, 224, 144);
-                }
+                int x = (spr >> 24) & 0xff;
+                int y = (spr >> 16) & 0xff;
+                if (x >= 249) x -= 256;
+                if (y > 150) y = (signed char) y;
+
+                ws_drawClippedSpriteLine(framebuffer, ws_gpu_scanline, x, y,
+                                         spr & 0x1ff, 8 + ((spr & 0xe00) >> 9),
+                                         spr & 0x4000, spr & 0x8000,
+                                         spriteWindowEnabled, (spr & 0x1000) != 0,
+                                         ws_sprWindow_x0, ws_sprWindow_y0,
+                                         ws_sprWindow_x1, ws_sprWindow_y1);
             }
         }
     }
@@ -910,6 +918,16 @@ void ws_gpu_renderScanline(uint8 *framebuffer) {
         int ws_fgScroll_y = ws_ioRam[0x13];
 
         int windowMode = ws_ioRam[0x00] & 0x30;
+
+        // The foreground window is two-dimensional. Outside its vertical
+        // range, an inside-window FG is invisible and an outside-window FG
+        // behaves exactly like an unwindowed layer.
+        if ((ws_gpu_scanline < ws_fgWindow_y0) || (ws_gpu_scanline > ws_fgWindow_y1)) {
+            if (windowMode == 0x20)
+                windowMode = 0x10; // impossible mode below: skip the FG line
+            else if (windowMode == 0x30)
+                windowMode = 0x00;
+        }
 
         // seek to the first tile
         ws_fgScroll_y = (ws_fgScroll_y + ws_gpu_scanline) & 0xff;
@@ -1428,31 +1446,29 @@ void ws_gpu_renderScanline(uint8 *framebuffer) {
 #endif
     // render sprites
     if (ws_ioRam[0x00] & 0x04) {
-        int ws_sprWindow_x0 = ws_ioRam[0x0c];
-        int ws_sprWindow_y0 = ws_ioRam[0x0d];
-        int ws_sprWindow_x1 = ws_ioRam[0x0e];
-        int ws_sprWindow_y1 = ws_ioRam[0x0f];
-        uint32 *ws_sprRamBase = (uint32 *) (internalRam + (((uint32) ws_ioRam[0x04]) << 9));
+        const int ws_sprWindow_x0 = ws_ioRam[0x0c];
+        const int ws_sprWindow_y0 = ws_ioRam[0x0d];
+        const int ws_sprWindow_x1 = ws_ioRam[0x0e];
+        const int ws_sprWindow_y1 = ws_ioRam[0x0f];
+        const bool spriteWindowEnabled = (ws_ioRam[0x00] & 0x08) != 0;
+        const int spriteCount = ws_spriteCountCache[ws_spriteTableActive];
+        const uint32 *ws_sprRamBase = ws_spriteTable[ws_spriteTableActive];
 
-        // seek to first sprite
-        ws_sprRamBase += ws_ioRam[0x06] - 1;
+        for (int i = spriteCount; i > 0; i--) {
+            const uint32 spr = ws_sprRamBase[i - 1];
 
-        for (int i = ws_ioRam[0x06]; i > ws_ioRam[0x05]; i--) {
-            uint32 spr = *ws_sprRamBase--;
+            if ((spr & 0x2000)) {
+                int x = (spr >> 24) & 0xff;
+                int y = (spr >> 16) & 0xff;
+                if (x >= 249) x -= 256;
+                if (y > 150) y = (signed char) y;
 
-            if (spr & 0x2000) {
-                // sprite window on ?
-                if ((ws_ioRam[0x00] & 0x08) && (spr & 0x1000) && (ws_sprWindow_x0 != ws_sprWindow_x1)) {
-                    ws_drawClippedSpriteLine(framebuffer, ws_gpu_scanline, (spr & 0xff000000) >> 24,
-                                             (spr & 0x00ff0000) >> 16,
-                                             spr & 0x1ff, 8 + ((spr & 0xe00) >> 9), spr & 0x4000, spr & 0x8000,
-                                             ws_sprWindow_x0, ws_sprWindow_y0, ws_sprWindow_x1, ws_sprWindow_y1);
-                } else {
-                    ws_drawClippedSpriteLine(framebuffer, ws_gpu_scanline, (spr & 0xff000000) >> 24,
-                                             (spr & 0x00ff0000) >> 16,
-                                             spr & 0x1ff, 8 + ((spr & 0xe00) >> 9), spr & 0x4000, spr & 0x8000,
-                                             0, 0, 224, 144);
-                }
+                ws_drawClippedSpriteLine(framebuffer, ws_gpu_scanline, x, y,
+                                         spr & 0x1ff, 8 + ((spr & 0xe00) >> 9),
+                                         spr & 0x4000, spr & 0x8000,
+                                         spriteWindowEnabled, (spr & 0x1000) != 0,
+                                         ws_sprWindow_x0, ws_sprWindow_y0,
+                                         ws_sprWindow_x1, ws_sprWindow_y1);
             }
         }
     }
