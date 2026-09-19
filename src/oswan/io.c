@@ -32,6 +32,8 @@ uint8 ws_key_up;
 uint8 ws_key_down;
 uint8 ws_key_button_1;
 uint8 ws_key_button_2;
+uint8 ws_key_x1, ws_key_x2, ws_key_x3, ws_key_x4;
+uint8 ws_key_y1, ws_key_y2, ws_key_y3, ws_key_y4;
 uint8 ws_key_flipped;
 
 int rtcDataRegisterReadCount = 0;
@@ -55,6 +57,8 @@ void ws_io_reset(void) {
     ws_key_down = 0;
     ws_key_button_1 = 0;
     ws_key_button_2 = 0;
+    ws_key_x1 = ws_key_x2 = ws_key_x3 = ws_key_x4 = 0;
+    ws_key_y1 = ws_key_y2 = ws_key_y3 = ws_key_y4 = 0;
 
     memcpy(ws_ioRam, initialIoValue, 0x100);
 
@@ -199,16 +203,13 @@ uint8_t cpu_readport(uint8_t port) {
                 return (uint8) ((w1 & 0xf0) | w2);
             }
             if (w1 & 0x20) {
-                if (ws_key_flipped)
-                    w2 = (ws_key_button_1) | (ws_key_button_2 << 2);
-                else
-                    w2 = (ws_key_up << 0) | (ws_key_right << 1) | (ws_key_down << 2) | (ws_key_left << 3);
+                w2 = (ws_key_x1 << 0) | (ws_key_x2 << 1) |
+                     (ws_key_x3 << 2) | (ws_key_x4 << 3);
                 return (uint8) ((w1 & 0xf0) | w2);
             }
             if (w1 & 0x10) {
-                w2 = 0x00;
-                if (ws_key_flipped)
-                    w2 = (ws_key_up << 1) | (ws_key_right << 2) | (ws_key_down << 3) | (ws_key_left);
+                w2 = (ws_key_y1 << 0) | (ws_key_y2 << 1) |
+                     (ws_key_y3 << 2) | (ws_key_y4 << 3);
                 return (uint8) ((w1 & 0xf0) | w2);
             }
             break;

@@ -1478,6 +1478,22 @@ void ws_gpu_renderScanline(uint8 *framebuffer) {
 //
 //
 ////////////////////////////////////////////////////////////////////////////////
+void ws_gpu_refresh_palette(void) {
+    if (!ws_gpu_operatingInColor) {
+        for (unsigned i = 0; i < 16; ++i)
+            graphics_set_palette((uint8_t)i, ws_shades[i]);
+        return;
+    }
+    for (unsigned i = 0; i < 256; ++i) {
+        const uint16 color = (uint16)internalRam[0xfe00 + i * 2] |
+                             ((uint16)internalRam[0xfe01 + i * 2] << 8);
+        const uint8 r = (color >> 8) & 0xf;
+        const uint8 g = (color >> 4) & 0xf;
+        const uint8 b = color & 0xf;
+        graphics_set_palette((uint8_t)i, RGB888(r * 17, g * 17, b * 17));
+    }
+}
+
 void ws_gpu_write_byte(uint32_t offset, uint8_t value) {
     // ws 4 color tiles
     if ((offset >= 0x2000) && (offset < 0x4000)) {
@@ -1510,7 +1526,7 @@ void ws_gpu_write_byte(uint32_t offset, uint8_t value) {
             uint8 r = (color >> 8) & 0xf;
             uint8 g = (color >> 4) & 0xf;
             uint8 b = color & 0xf;
-            graphics_set_palette((offset & 0x1ff) >> 1, RGB888(r * 16, g * 16, b * 16));
+            graphics_set_palette((offset & 0x1ff) >> 1, RGB888(r * 17, g * 17, b * 17));
         }
     } else if (offset < 0x4000)
         internalRam[offset] = value;

@@ -31,6 +31,7 @@ void ws_gpu_reset(void);
 void ws_gpu_renderScanline(uint8 *framebufferPtr);
 void ws_gpu_changeVideoMode(uint8 value);
 void ws_gpu_write_byte(uint32_t offset, uint8_t value);
+void ws_gpu_refresh_palette(void);
 void ws_gpu_port_write(uint32_t port,uint8_t value);
 uint8_t ws_gpu_port_read(uint8_t port);
 void ws_gpu_set_colour_scheme(int scheme);

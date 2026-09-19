@@ -22,6 +22,7 @@
 extern "C" {
 #include "ws.h"
 #include "io.h"
+#include "gpu.h"
 }
 
 #define HOME_DIR "\\WS"
@@ -72,15 +73,19 @@ enum rotation_mode_t : uint8_t {
 
 static uint8_t rotation_mode = ROTATION_AUTO;
 static bool manual_portrait = false;
+static bool rotation_hotkey_override = false;
+static bool keyboard_y1 = false, keyboard_y2 = false, keyboard_y3 = false, keyboard_y4 = false;
 
 static bool portrait_enabled() {
+    bool portrait;
     switch (rotation_mode) {
-        case ROTATION_LANDSCAPE: return false;
-        case ROTATION_PORTRAIT:  return true;
-        case ROTATION_MANUAL:    return manual_portrait;
+        case ROTATION_LANDSCAPE: portrait = false; break;
+        case ROTATION_PORTRAIT:  portrait = true; break;
+        case ROTATION_MANUAL:    portrait = manual_portrait; break;
         case ROTATION_AUTO:
-        default:                 return ws_rotated() != 0;
+        default:                 portrait = ws_rotated() != 0; break;
     }
+    return portrait ^ rotation_hotkey_override;
 }
 
 static void rotate_frame_90cw(const uint8_t *src, uint8_t *dst) {
@@ -96,6 +101,8 @@ extern	uint8	ws_key_up;
 extern	uint8	ws_key_down;
 extern	uint8	ws_key_button_1;
 extern	uint8	ws_key_button_2;
+extern	uint8	ws_key_x1, ws_key_x2, ws_key_x3, ws_key_x4;
+extern	uint8	ws_key_y1, ws_key_y2, ws_key_y3, ws_key_y4;
 
 static void nespad_tick() {
     nespad_read();
@@ -138,8 +145,14 @@ void process_kbd_report(hid_keyboard_report_t const* report, hid_keyboard_report
     keyboard_bits.start = isInReport(report, HID_KEY_ENTER) || isInReport(report, HID_KEY_KEYPAD_ENTER);
     keyboard_bits.select = isInReport(report, HID_KEY_BACKSPACE) || isInReport(report, HID_KEY_ESCAPE) || isInReport(report, HID_KEY_KEYPAD_ADD);
 
-    keyboard_bits.b = isInReport(report, HID_KEY_Z) || isInReport(report, HID_KEY_O) || isInReport(report, HID_KEY_KEYPAD_0);
-    keyboard_bits.a = isInReport(report, HID_KEY_X) || isInReport(report, HID_KEY_P) || isInReport(report, HID_KEY_KEYPAD_DECIMAL);
+    keyboard_bits.b = isInReport(report, HID_KEY_Z) || isInReport(report, HID_KEY_KEYPAD_0);
+    keyboard_bits.a = isInReport(report, HID_KEY_X) || isInReport(report, HID_KEY_KEYPAD_DECIMAL);
+
+    // WonderSwan has two independent four-button cursor groups.
+    keyboard_y1 = isInReport(report, HID_KEY_O);
+    keyboard_y2 = isInReport(report, HID_KEY_P);
+    keyboard_y3 = isInReport(report, HID_KEY_K);
+    keyboard_y4 = isInReport(report, HID_KEY_L);
 
     bool b7 = isInReport(report, HID_KEY_KEYPAD_7);
     bool b9 = isInReport(report, HID_KEY_KEYPAD_9);
@@ -876,6 +889,7 @@ void menu() {
     }
 
     graphics_set_mode(GRAPHICSMODE_DEFAULT);
+    ws_gpu_refresh_palette();
 
 }
 
@@ -1009,14 +1023,24 @@ int main() {
                 menu();
             }
 
-            if (rotation_mode == ROTATION_MANUAL && !gamepad1_bits.start &&
-                gamepad1_bits.select && !select_pressed_last_frame) {
-                manual_portrait = !manual_portrait;
-            }
+            // WonderSwan has no Select button.  NES Select / keyboard
+            // Backspace is an emulator hotkey that flips the presentation.
+            if (!gamepad1_bits.start && gamepad1_bits.select && !select_pressed_last_frame)
+                rotation_hotkey_override = !rotation_hotkey_override;
             select_pressed_last_frame = gamepad1_bits.select;
 
             portrait = portrait_enabled();
-            ws_io_setControlsFlipped(portrait);
+
+            // Keyboard exposes both native cursor groups simultaneously.
+            // A NES pad has only one D-pad, so map it by orientation.
+            ws_key_x1 = keyboard_bits.up    || (!portrait && (nespad_state & DPAD_UP));
+            ws_key_x2 = keyboard_bits.right || (!portrait && (nespad_state & DPAD_RIGHT));
+            ws_key_x3 = keyboard_bits.down  || (!portrait && (nespad_state & DPAD_DOWN));
+            ws_key_x4 = keyboard_bits.left  || (!portrait && (nespad_state & DPAD_LEFT));
+            ws_key_y1 = keyboard_y1 || (portrait && (nespad_state & DPAD_UP));
+            ws_key_y2 = keyboard_y2 || (portrait && (nespad_state & DPAD_RIGHT));
+            ws_key_y3 = keyboard_y3 || (portrait && (nespad_state & DPAD_DOWN));
+            ws_key_y4 = keyboard_y4 || (portrait && (nespad_state & DPAD_LEFT));
             // Center the native image in the 320x240 VGA viewport. Landscape
             // is 224x144 -> (48,48); portrait is 144x224 -> (88,8).
             graphics_set_offset(portrait ? 88 : 48, portrait ? 8 : 48);

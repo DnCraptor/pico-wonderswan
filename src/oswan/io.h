@@ -23,6 +23,8 @@ extern	uint8	ws_key_up;
 extern	uint8	ws_key_down;
 extern	uint8	ws_key_button_1;
 extern	uint8	ws_key_button_2;
+extern	uint8	ws_key_x1, ws_key_x2, ws_key_x3, ws_key_x4;
+extern	uint8	ws_key_y1, ws_key_y2, ws_key_y3, ws_key_y4;
 
 void ws_io_init(void);
 void ws_io_reset(void);
