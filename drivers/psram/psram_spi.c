@@ -1,5 +1,8 @@
 #include "psram_spi.h"
 #include "hardware/clocks.h"
+#include <stdlib.h>
+#include <string.h>
+#include "ff.h"
 
 #if PICO_RP2350
 extern bool wonderswan_qspi_psram_available(void);
@@ -11,6 +14,58 @@ static inline volatile uint8_t *qspi_aux_ptr(uint32_t addr) {
 
 static psram_spi_inst_t psram_spi;
 static uint32_t psram_init_sys_hz;
+static bool legacy_psram_available;
+static uint32_t fallback_sram_size;
+static uint32_t fallback_eeprom_size;
+
+#define NVRAM_CACHE_SIZE 4096u
+#define NVRAM_BACKING_FILE "/tmp/wonderswan.nvram"
+static FIL nvram_file;
+static bool nvram_file_open;
+static uint8_t nvram_cache[NVRAM_CACHE_SIZE];
+static uint32_t nvram_cache_base;
+static uint32_t nvram_cache_valid;
+static bool nvram_cache_loaded;
+static bool nvram_cache_dirty;
+
+static bool nvram_cache_flush(void) {
+    if (!nvram_file_open || !nvram_cache_loaded || !nvram_cache_dirty) return true;
+    if (f_lseek(&nvram_file, nvram_cache_base) != FR_OK) return false;
+    UINT written = 0;
+    if (f_write(&nvram_file, nvram_cache, nvram_cache_valid, &written) != FR_OK ||
+        written != nvram_cache_valid) return false;
+    nvram_cache_dirty = false;
+    return true;
+}
+
+static bool nvram_cache_load(uint32_t offset) {
+    const uint32_t total = fallback_eeprom_size + fallback_sram_size;
+    const uint32_t base = offset & ~(NVRAM_CACHE_SIZE - 1u);
+    if (nvram_cache_loaded && nvram_cache_base == base) return true;
+    if (!nvram_cache_flush()) return false;
+    nvram_cache_base = base;
+    nvram_cache_valid = total - base;
+    if (nvram_cache_valid > NVRAM_CACHE_SIZE) nvram_cache_valid = NVRAM_CACHE_SIZE;
+    memset(nvram_cache, 0, sizeof(nvram_cache));
+    if (f_lseek(&nvram_file, base) != FR_OK) return false;
+    UINT read = 0;
+    if (f_read(&nvram_file, nvram_cache, nvram_cache_valid, &read) != FR_OK) return false;
+    nvram_cache_loaded = true;
+    nvram_cache_dirty = false;
+    return true;
+}
+
+static bool nvram_translate(uint32_t addr, uint32_t *offset) {
+    if (addr >= (1u << 20)) {
+        const uint32_t sram_offset = addr - (1u << 20);
+        if (sram_offset >= fallback_sram_size) return false;
+        *offset = fallback_eeprom_size + sram_offset;
+        return true;
+    }
+    if (addr >= fallback_eeprom_size) return false;
+    *offset = addr;
+    return true;
+}
 
 #define ITE_PSRAM (1ul << 20)
 #define MAX_PSRAM (512ul << 20)
@@ -44,27 +99,68 @@ uint32_t psram_size() {
 
 uint32_t init_psram() {
     psram_init_sys_hz = clock_get_hz(clk_sys);
+    legacy_psram_available = false;
 #if PICO_RP2350
     if (wonderswan_qspi_psram_available()) return 2u << 20;
 #endif
+#ifdef WONDERSWAN_LEGACY_SPI_PSRAM
     psram_spi = psram_spi_init_clkdiv(pio0, -1, 2.0, false);
-    if ( !_psram_size() ) {
+    if (!_psram_size()) {
         psram_spi = psram_spi_init_clkdiv(pio0, -1, 2.0, true);
     }
-    return psram_size();
+    const uint32_t size = psram_size();
+    legacy_psram_available = size != 0;
+    return size;
+#else
+    return 0;
+#endif
+}
+
+bool psram_configure_cart_storage(uint32_t sram_size, uint32_t eeprom_size) {
+#if PICO_RP2350
+    if (wonderswan_qspi_psram_available()) return true;
+#endif
+    if (legacy_psram_available) return true;
+
+    if (nvram_file_open) {
+        nvram_cache_flush();
+        f_close(&nvram_file);
+        nvram_file_open = false;
+    }
+    fallback_sram_size = sram_size;
+    fallback_eeprom_size = eeprom_size;
+    nvram_cache_loaded = false;
+    nvram_cache_dirty = false;
+
+    const uint32_t total = sram_size + eeprom_size;
+    if (!total) return true;
+    const FRESULT mkdir_result = f_mkdir("/tmp");
+    if (mkdir_result != FR_OK && mkdir_result != FR_EXIST) return false;
+    if (f_open(&nvram_file, NVRAM_BACKING_FILE, FA_READ | FA_WRITE | FA_CREATE_ALWAYS) != FR_OK)
+        return false;
+    nvram_file_open = true;
+
+    /* Pre-size the temporary backing file without consuming cartridge-sized RAM. */
+    if (f_lseek(&nvram_file, total - 1u) != FR_OK) return false;
+    const uint8_t zero = 0;
+    UINT written = 0;
+    if (f_write(&nvram_file, &zero, 1, &written) != FR_OK || written != 1) return false;
+    if (f_sync(&nvram_file) != FR_OK) return false;
+    return true;
 }
 
 void psram_reclock() {
 #if PICO_RP2350
     if (wonderswan_qspi_psram_available()) return;
 #endif
-    if (psram_init_sys_hz && psram_spi.sm >= 0) {
+    if (legacy_psram_available && psram_init_sys_hz && psram_spi.sm >= 0) {
         pio_sm_set_clkdiv(psram_spi.pio, psram_spi.sm,
             2.0f * (float)clock_get_hz(clk_sys) / (float)psram_init_sys_hz);
     }
 }
 
 void psram_cleanup() {
+    if (!legacy_psram_available) return;
     //logMsg("PSRAM cleanup"); // TODO: block mode, ensure diapason
     for (uint32_t addr32 = (1ul << 20); addr32 < (2ul << 20); addr32 += 4) {
         psram_write32(&psram_spi, addr32, 0);
@@ -75,42 +171,49 @@ void write8psram(uint32_t addr32, uint8_t v) {
 #if PICO_RP2350
     if (wonderswan_qspi_psram_available()) { *qspi_aux_ptr(addr32) = v; return; }
 #endif
-    psram_write8(&psram_spi, addr32, v);
+    if (legacy_psram_available) { psram_write8(&psram_spi, addr32, v); return; }
+    uint32_t offset;
+    if (nvram_file_open && nvram_translate(addr32, &offset) && nvram_cache_load(offset)) {
+        nvram_cache[offset - nvram_cache_base] = v;
+        nvram_cache_dirty = true;
+    }
 }
 
 void write16psram(uint32_t addr32, uint16_t v) {
-    psram_write16(&psram_spi, addr32, v);
+    write8psram(addr32, (uint8_t)v);
+    write8psram(addr32 + 1, (uint8_t)(v >> 8));
 }
 
 void write32psram(uint32_t addr32, uint32_t v) {
-    psram_write32(&psram_spi, addr32, v);
+    write16psram(addr32, (uint16_t)v);
+    write16psram(addr32 + 2, (uint16_t)(v >> 16));
 }
 
 void writepsram(uint32_t addr32, uint8_t* b, size_t sz) {
-    while (sz--) {
-        psram_write8(&psram_spi, addr32++, *b++);
-    }
+    while (sz--) write8psram(addr32++, *b++);
 }
 
 void readpsram(uint8_t* b, uint32_t addr32, size_t sz) {
-    while (sz--) {
-        *b++ = psram_read8(&psram_spi, addr32++);
-    }
+    while (sz--) *b++ = read8psram(addr32++);
 }
 
 uint8_t read8psram(uint32_t addr32) {
 #if PICO_RP2350
     if (wonderswan_qspi_psram_available()) return *qspi_aux_ptr(addr32);
 #endif
-    return psram_read8(&psram_spi, addr32);
+    if (legacy_psram_available) return psram_read8(&psram_spi, addr32);
+    uint32_t offset;
+    if (nvram_file_open && nvram_translate(addr32, &offset) && nvram_cache_load(offset))
+        return nvram_cache[offset - nvram_cache_base];
+    return 0xff;
 }
 
 uint16_t read16psram(uint32_t addr32) {
-    return psram_read16(&psram_spi, addr32);
+    return (uint16_t)read8psram(addr32) | ((uint16_t)read8psram(addr32 + 1) << 8);
 }
 
 uint32_t read32psram(uint32_t addr32) {
-    return psram_read32(&psram_spi, addr32);
+    return (uint32_t)read16psram(addr32) | ((uint32_t)read16psram(addr32 + 2) << 16);
 }
 
 #include <stdio.h>

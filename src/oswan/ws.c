@@ -112,7 +112,7 @@ void ws_patchRom(void)
 ////////////////////////////////////////////////////////////////////////////////
 int ws_init(uint8  *rom, size_t romSize)
 {
-	ws_memory_init(rom, romSize);
+	if (!ws_memory_init(rom, romSize)) return 0;
 // TODO: Move patches to filebrowser_read
     //	ws_patchRom();
 	ws_io_init();

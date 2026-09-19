@@ -7,6 +7,7 @@
 #include <hardware/structs/qmi.h>
 #include <hardware/watchdog.h>
 #include <pico/multicore.h>
+#include <pico/flash.h>
 #include <pico/stdlib.h>
 
 #include <graphics.h>
@@ -27,8 +28,32 @@ extern "C" {
 
 #define HOME_DIR "\\WS"
 extern char __flash_binary_end;
-#define FLASH_TARGET_OFFSET (((((uintptr_t)&__flash_binary_end - XIP_BASE) / FLASH_SECTOR_SIZE) + 4) * FLASH_SECTOR_SIZE)
+#define FLASH_TARGET_OFFSET (2u * 1024u * 1024u)
 static uintptr_t rom = XIP_BASE + FLASH_TARGET_OFFSET;
+
+static uint32_t detect_flash_size_bytes() {
+    uint8_t tx[4] = { 0x9f, 0, 0, 0 };
+    uint8_t rx[4] = { 0, 0, 0, 0 };
+    multicore_lockout_start_blocking();
+    flash_do_cmd(tx, rx, sizeof(tx));
+    multicore_lockout_end_blocking();
+
+    const uint8_t capacity_bits = rx[3];
+    if (capacity_bits >= 20 && capacity_bits < 32)
+        return 1u << capacity_bits;
+    return PICO_FLASH_SIZE_BYTES;
+}
+
+struct flash_sector_write_t {
+    uint32_t offset;
+    const uint8_t *data;
+};
+
+static void program_flash_sector(void *param) {
+    const flash_sector_write_t *write = (const flash_sector_write_t *)param;
+    flash_range_erase(write->offset, FLASH_SECTOR_SIZE);
+    flash_range_program(write->offset, write->data, FLASH_SECTOR_SIZE);
+}
 
 #define AUDIO_SAMPLE_RATE 24000
 #define AUDIO_BUFFER_LENGTH (AUDIO_SAMPLE_RATE / 60 + 1)
@@ -240,6 +265,8 @@ bool isExecutable(const char pathname[255], const char *extensions) {
     return false;
 }
 
+static bool temporary_flash_reclock(uint32_t target_khz);
+
 bool filebrowser_loadfile(const char pathname[256]) {
     UINT bytes_read = 0;
     FIL file;
@@ -287,7 +314,28 @@ bool filebrowser_loadfile(const char pathname[256]) {
             f_close(&file);
         }
     } else {
-        multicore_lockout_start_blocking();
+        const uint32_t firmware_end = (uint32_t)((uintptr_t)&__flash_binary_end - XIP_BASE);
+        if (firmware_end > FLASH_TARGET_OFFSET) {
+            draw_text("ERROR: Firmware overlaps ROM flash area!", window_x + 1, window_y + 2, 13, 1);
+            sleep_ms(5000);
+            return false;
+        }
+
+        const uint32_t flash_size = detect_flash_size_bytes();
+        if (FLASH_TARGET_OFFSET >= flash_size || load_size > flash_size - FLASH_TARGET_OFFSET) {
+            draw_text("ERROR: ROM too large for flash!", window_x + 1, window_y + 2, 13, 1);
+            sleep_ms(5000);
+            return false;
+        }
+
+        const uint32_t original_sys_khz = clock_get_hz(clk_sys) / 1000u;
+        const bool need_clock_restore = original_sys_khz > 252000u;
+        if (need_clock_restore && !temporary_flash_reclock(252000u)) {
+            draw_text("ERROR: Cannot lower clock for flash!", window_x + 1, window_y + 2, 13, 1);
+            sleep_ms(5000);
+            return false;
+        }
+
         auto flash_target_offset = FLASH_TARGET_OFFSET;
         uint32_t total_read = 0;
         FRESULT read_result = FR_OK;
@@ -303,10 +351,12 @@ bool filebrowser_loadfile(const char pathname[256]) {
                 const uint8_t *flash_data =
                     (const uint8_t *)(XIP_BASE + flash_target_offset);
                 if (memcmp(flash_data, buffer, sizeof(buffer)) != 0) {
-                    const uint32_t ints = save_and_disable_interrupts();
-                    flash_range_erase(flash_target_offset, FLASH_SECTOR_SIZE);
-                    flash_range_program(flash_target_offset, buffer, FLASH_SECTOR_SIZE);
-                    restore_interrupts(ints);
+                    flash_sector_write_t write = { flash_target_offset, buffer };
+                    if (flash_safe_execute(program_flash_sector, &write, UINT32_MAX) != PICO_OK ||
+                        memcmp(flash_data, buffer, sizeof(buffer)) != 0) {
+                        read_result = FR_DISK_ERR;
+                        break;
+                    }
                 }
 
                 total_read += bytes_read;
@@ -316,8 +366,10 @@ bool filebrowser_loadfile(const char pathname[256]) {
             f_close(&file);
         }
 
+        if (need_clock_restore && !temporary_flash_reclock(original_sys_khz))
+            read_result = FR_DISK_ERR;
+
         gpio_put(PICO_DEFAULT_LED_PIN, true);
-        multicore_lockout_end_blocking();
         load_ok = read_result == FR_OK && total_read == load_size;
     }
 
@@ -476,8 +528,15 @@ void filebrowser(const char pathname[256], const char executables[11]) {
                 if (file_at_cursor.is_executable) {
                     sprintf(tmp, "%s\\%s", basepath, file_at_cursor.filename);
 
-                    filebrowser_loadfile(tmp);
-                    return;
+                    if (filebrowser_loadfile(tmp)) {
+                        return;
+                    }
+
+                    // Keep the browser active after a failed load.  In
+                    // particular, do not let main() start the previous or a
+                    // partially loaded cartridge after a size/read error.
+                    debounce = false;
+                    continue;
                 }
             }
 
@@ -601,6 +660,21 @@ static void reclock_drivers(void) {
     nespad_reclock(clock_get_hz(clk_sys) / 1000);
     psram_reclock();
     sdcard_reclock();
+}
+
+static bool temporary_flash_reclock(uint32_t target_khz) {
+    /* Flash programming uses a temporary CPU clock only.  Do not touch QMI,
+       video/audio/SD dividers, voltage, or any other runtime driver here.
+       Their settings remain valid again as soon as clk_sys is restored. */
+    const uint32_t current_khz = clock_get_hz(clk_sys) / 1000u;
+    if (current_khz == target_khz) return true;
+
+    const uint32_t irq_state = save_and_disable_interrupts();
+    if (runtime_drivers_ready) multicore_lockout_start_blocking();
+    const bool res = set_target_sys_clock(target_khz);
+    if (runtime_drivers_ready) multicore_lockout_end_blocking();
+    restore_interrupts(irq_state);
+    return res;
 }
 
 bool overclock() {
@@ -895,7 +969,7 @@ void menu() {
 
 /* Renderer loop on Pico's second core */
 void __time_critical_func(render_core)() {
-    multicore_lockout_victim_init();
+    flash_safe_execute_core_init();
 
     i2s_config = i2s_get_default_config();
     i2s_config.sample_freq = AUDIO_SAMPLE_RATE;
@@ -977,11 +1051,19 @@ int main() {
         // without memory-mapped QSPI PSRAM.
         init_psram();
     }
+    /* Ensure the temporary backing directory exists before cartridge startup. */
+    if (f_mount(&fs, "", 1) == FR_OK) f_mkdir("/tmp");
+
     while (true) {
         graphics_set_mode(TEXTMODE_DEFAULT);
         filebrowser(HOME_DIR, "ws,wsc");
 
-        ws_init((uint8_t *)rom, rom_size);
+        if (!ws_init((uint8_t *)rom, rom_size)) {
+            graphics_set_mode(TEXTMODE_DEFAULT);
+            draw_text("ERROR: not enough RAM for cartridge save memory!", 0, 0, 13, 0);
+            sleep_ms(5000);
+            continue;
+        }
         if (filename[strlen(filename)-1]=='c'|| filename[strlen(filename)-1]=='C') {
             ws_set_system(WS_SYSTEM_COLOR);
         } else {

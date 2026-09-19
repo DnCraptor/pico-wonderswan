@@ -121,15 +121,18 @@ ws_romHeaderStruct		*ws_rom_getHeader(uint8 *wsrom, uint32 wsromSize)
 ////////////////////////////////////////////////////////////////////////////////
 uint32				ws_rom_sramSize(uint8 *wsrom, uint32 wsromSize)
 {
-	ws_romHeaderStruct		*romHeader=ws_rom_getHeader(wsrom,wsromSize);
-	switch (romHeader->eepromSize&0xf0)
+	ws_romHeaderStruct *romHeader = ws_rom_getHeader(wsrom, wsromSize);
+
+	/* Save-memory type and size are encoded by the complete header byte. */
+	switch (romHeader->eepromSize)
 	{
-	case WS_SRAM_SIZE_NONE:		return(0);
-	case WS_SRAM_SIZE_1k:		return(0x400);
-	case WS_SRAM_SIZE_16k:		return(0x4000);
-	case WS_SRAM_SIZE_8k:		return(0x2000);
+	case 0x01: return 8u << 10;
+	case 0x02: return 32u << 10;
+	case 0x03: return 128u << 10;
+	case 0x04: return 256u << 10;
+	case 0x05: return 512u << 10;
+	default:   return 0;
 	}
-	return(0);
 }
 ////////////////////////////////////////////////////////////////////////////////
 //
@@ -144,13 +147,14 @@ uint32				ws_rom_sramSize(uint8 *wsrom, uint32 wsromSize)
 ////////////////////////////////////////////////////////////////////////////////
 uint32				ws_rom_eepromSize(uint8 *wsrom, uint32 wsromSize)
 {
-	ws_romHeaderStruct		*romHeader=ws_rom_getHeader(wsrom,wsromSize);
-	switch (romHeader->eepromSize&0xf)
+	ws_romHeaderStruct *romHeader = ws_rom_getHeader(wsrom, wsromSize);
+
+	switch (romHeader->eepromSize)
 	{
-	case WS_EEPROM_SIZE_NONE:	return(0);
-	case WS_EEPROM_SIZE_64k:	return(0x10000);
-	case WS_EEPROM_SIZE_256k:	return(0x40000);
+	case 0x10: return 128;
+	case 0x20: return 2u << 10;
+	case 0x50: return 1u << 10;
+	default:   return 0;
 	}
-	return(0);
 }
 

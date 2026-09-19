@@ -101,7 +101,11 @@ uint8_t __not_in_flash_func(cpu_readmem20)(uint32_t addr) {
             return ws_rom[offset + ((ws_ioRam[IO_ROM_BANK_BASE_SELECTOR + bank] & ((romSize >> 16) - 1)) << 16)];
         default: {
             unsigned int romBank = (256 - (((ws_ioRam[IO_ROM_BANK_BASE_SELECTOR] & 0xf) << 4) | (bank & 0xf)));
-            return ws_rom[(unsigned) (offset + romSize - (romBank << 16))];
+            /* Cartridge ROM banks mirror across the actual ROM size.  Keep the
+               calculated address inside the loaded image; unsigned underflow
+               here otherwise turns a valid bank mirror into an invalid XIP
+               access when ROM is backed directly by flash. */
+            return ws_rom[(offset + romSize - (romBank << 16)) & romAddressMask];
         }
     }
     return (0xff);
@@ -118,7 +122,7 @@ uint8_t __not_in_flash_func(cpu_readmem20)(uint32_t addr) {
 //
 //
 ////////////////////////////////////////////////////////////////////////////////
-void ws_memory_init(uint8 *rom, uint32 wsRomSize) {
+int ws_memory_init(uint8 *rom, uint32 wsRomSize) {
     ws_romHeaderStruct *ws_romHeader;
 
     ws_rom = rom;
@@ -126,13 +130,16 @@ void ws_memory_init(uint8 *rom, uint32 wsRomSize) {
     ws_romHeader = ws_rom_getHeader(ws_rom, romSize);
     ws_rom_checksum = ws_romHeader->checksum;
 
-    sramAddressMask = ws_rom_sramSize(ws_rom, romSize) - 1;
-    externalEepromAddressMask = ws_rom_eepromSize(ws_rom, romSize) - 1;
+    const uint32 sramSize = ws_rom_sramSize(ws_rom, romSize);
+    const uint32 eepromSize = ws_rom_eepromSize(ws_rom, romSize);
+    sramAddressMask = sramSize ? sramSize - 1 : 0;
+    externalEepromAddressMask = eepromSize ? eepromSize - 1 : 0;
     romAddressMask = romSize - 1;
 
     if (ws_romHeader->minimumSupportSystem == WS_SYSTEM_COLOR)
         ws_gpu_operatingInColor = 1;
 
+    return psram_configure_cart_storage(sramSize, eepromSize) ? 1 : 0;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
