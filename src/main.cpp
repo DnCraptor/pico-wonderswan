@@ -694,6 +694,7 @@ enum menu_type_e {
     SAVE,
     LOAD,
     START_DEMO,
+    DEFAULTS,
     ROM_SELECT,
     SHOW_PALETTES,
     GAME_PALETTE,
@@ -985,7 +986,7 @@ static bool apply_audio_rate() {
 static bool mono_ws_rom_loaded(bool game_loaded);
 
 #define WS_CONFIG_MAGIC 0x31434657u /* WFC1 */
-#define WS_CONFIG_VERSION 3u
+#define WS_CONFIG_VERSION 4u
 
 typedef struct __attribute__((packed)) {
     uint32_t magic;
@@ -995,11 +996,8 @@ typedef struct __attribute__((packed)) {
     uint8_t show_fps;
     uint8_t audio_volume;
     uint8_t audio_rate_shift;
-    uint8_t frequency_index;
-    uint8_t voltage_index;
-    uint8_t palette_index;
     uint8_t demo_duration;
-    uint8_t reserved[6];
+    uint8_t reserved[1];
     uint32_t global_shades[16];
 } ws_config_t;
 
@@ -1061,9 +1059,6 @@ static bool load_config(void) {
     show_fps = c.show_fps != 0;
     audio_volume = c.audio_volume <= 4 ? c.audio_volume : 4;
     audio_rate_shift = c.audio_rate_shift <= 3 ? c.audio_rate_shift : 0;
-    frequency_index = c.frequency_index < count_of(frequencies) ? c.frequency_index : 0;
-    voltage_index = c.voltage_index <= 4 ? c.voltage_index : 0;
-    palette_index = c.palette_index <= 2 ? c.palette_index : 0;
     demo_duration = c.demo_duration < count_of(demo_seconds) ? c.demo_duration : 0;
     for (unsigned i = 0; i < 16; ++i)
         global_ws_shades[i] = c.global_shades[i] & 0x00ffffffu;
@@ -1082,9 +1077,6 @@ static bool save_config(void) {
     c.show_fps = show_fps;
     c.audio_volume = audio_volume;
     c.audio_rate_shift = audio_rate_shift;
-    c.frequency_index = frequency_index;
-    c.voltage_index = voltage_index;
-    c.palette_index = palette_index;
     c.demo_duration = demo_duration;
     if (!global_palette_valid) {
         ws_set_colour_scheme(palette_index);
@@ -1498,6 +1490,7 @@ const MenuItem menu_items[] = {
         { "Start Demo", START_DEMO },
         { "Show current palettes", SHOW_PALETTES },
         { "Save colors for this game", GAME_PALETTE, nullptr, &game_palette_action },
+        { "Default", DEFAULTS },
         { "Reset to ROM select", ROM_SELECT },
         { "Return to game", RETURN }
 };
@@ -1511,8 +1504,37 @@ static bool menu_item_selectable(uint index, bool game_loaded) {
            (type != GAME_PALETTE || mono_ws_rom_loaded(game_loaded));
 }
 
+static bool reset_config_and_offer_reboot(void) {
+    if (f_mount(&fs, "", 1) != FR_OK)
+        return false;
+
+    const FRESULT fr = f_unlink("/.config/wonderswan/wonderswan.conf");
+    if (fr != FR_OK && fr != FR_NO_FILE)
+        return false;
+
+    /* Wait for the key that activated Default to be released before asking. */
+    while (gamepad1_bits.start)
+        sleep_ms(10);
+
+    draw_window("Default", TEXTMODE_COLS / 2 - 15, TEXTMODE_ROWS / 2 - 2, 30, 5);
+    draw_text("Config deleted. Reboot now?", TEXTMODE_COLS / 2 - 13, TEXTMODE_ROWS / 2 - 1, 15, 1);
+    draw_text("START/Enter = Yes   B/Esc = No", TEXTMODE_COLS / 2 - 15, TEXTMODE_ROWS / 2 + 1, 15, 1);
+
+    for (;;) {
+        if (gamepad1_bits.start) {
+            watchdog_enable(10, true);
+            while (true)
+                tight_loop_contents();
+        }
+        if (gamepad1_bits.b || (gamepad1_bits.select && !gamepad1_bits.start))
+            return true;
+        sleep_ms(10);
+    }
+}
+
 static void menu(bool game_loaded) {
     bool exit = false;
+    bool suppress_config_save = false;
     memset((uint8_t*)SCREEN1, 0, 144 * 224);
     memset((uint8_t*)SCREEN2, 0, 144 * 224);
     memset((uint8_t*)SCREEN3, 0, 144 * 224);
@@ -1585,6 +1607,16 @@ static void menu(bool game_loaded) {
                         }
                         break;
 
+                    case DEFAULTS:
+                        if (gamepad1_bits.start) {
+                            /* Do not let the normal menu epilogue recreate the
+                               config file after Default has deleted it. */
+                            suppress_config_save = reset_config_and_offer_reboot();
+                            if (suppress_config_save)
+                                exit = true;
+                        }
+                        break;
+
                     case ROM_SELECT:
                         if (gamepad1_bits.start) {
                             demo_stop();
@@ -1644,7 +1676,8 @@ static void menu(bool game_loaded) {
         sleep_ms(125);
     }
 
-    save_config();
+    if (!suppress_config_save)
+        save_config();
 
     /* Keep the effective palette: game override when linked, otherwise the
        global palette.  Rebuilding from palette_index here would discard edits. */
@@ -1718,13 +1751,11 @@ bool PSRAM_AVAILABLE = true;
 int main() {
     overclock();
 
-    /* Load persistent settings before core1 initializes audio/video so all
-       drivers start with the saved values.  Re-apply the clock afterwards
-       because frequency/voltage are part of the persistent configuration. */
-    if (f_mount(&fs, "", 1) == FR_OK) {
+    /* Persistent config contains only emulator/UI settings. Clock and voltage
+       are deliberately runtime-only, so loading a config can never alter the
+       bootstrap clock before core1 starts. */
+    if (f_mount(&fs, "", 1) == FR_OK)
         load_config();
-        overclock();
-    }
 
 //    stdio_init_all();
 
@@ -1732,10 +1763,18 @@ int main() {
     multicore_launch_core1(render_core);
     sem_release(&vga_start_semaphore);
 
-    /* Config loading above only updates host-side state.  Do not touch video
-       (including palette programming) until core1 has completed graphics_init(). */
+    /* Once input is alive, held aggregate SELECT removes the global config
+       and reboots. Per-game INI files are left untouched. */
     while (!runtime_drivers_ready)
         tight_loop_contents();
+    sleep_ms(200);
+    if (gamepad1_bits.select) {
+        if (f_mount(&fs, "", 1) == FR_OK)
+            f_unlink("/.config/wonderswan/wonderswan.conf");
+        watchdog_reboot(0, 0, 0);
+        while (true)
+            tight_loop_contents();
+    }
 
     gpio_init(PICO_DEFAULT_LED_PIN);
     gpio_set_dir(PICO_DEFAULT_LED_PIN, GPIO_OUT);
