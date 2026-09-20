@@ -174,7 +174,7 @@ void nec_exit (void)
 
 
 
-void nec_int(uint32_t wektor)
+int nec_int(uint32_t wektor)
 {
   
 	uint32_t dest_seg, dest_off;
@@ -189,7 +189,9 @@ void nec_int(uint32_t wektor)
 		PUSH(I.ip);
 		I.ip = (uint16_t)dest_off;
 		I.sregs[CS] = (uint16_t)dest_seg;
+		return 1;   /* fired */
 	}
+	return 0;       /* IF masked: caller keeps it pending */
 }
 
 static void nec_interrupt(unsigned int_num, uint8_t md_flag)

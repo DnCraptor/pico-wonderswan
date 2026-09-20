@@ -63,7 +63,7 @@ int nec_execute(int cycles);
 uint32_t nec_get_clock(void);
 unsigned nec_get_reg(int regnum);
 void nec_reset (void *param);
-void nec_int(uint32_t wektor);
+int nec_int(uint32_t wektor);
 
 typedef struct {
     uint16_t regs[8];

@@ -44,6 +44,21 @@ uint32	ws_cycles;
 uint32	ws_skip;
 uint32	ws_cyclesByLine=256;
 uint8	ws_gpu_scroll_latch[4];   // 0x10 X1, 0x11 Y1, 0x12 X2, 0x13 Y2, sampled per line
+uint8	ws_int_pending = 0;         // latched interrupt sources (0xb2 bit layout)
+
+/* Serve the highest-priority pending+enabled interrupt when IF allows it.
+   Sources are LATCHED (unlike a direct nec_int at the scanline boundary, which
+   was silently dropped whenever the game had interrupts masked - e.g. Klonoa's
+   raster cloud-scroll IRQ lost during an event, snapping the clouds back).
+   Lowest set bit = highest priority, matching the hardware / Mednafen. */
+void __not_in_flash_func(ws_serve_interrupts)(void)
+{
+	const uint8 active = ws_int_pending & ws_ioRam[0xb2];
+	if (!active) return;
+	const int i = __builtin_ctz(active);
+	if (nec_int((ws_ioRam[0xb0] + (uint32)i) * 4))
+		ws_int_pending &= ~(1u << i);   // cleared only on an actual fire
+}
 
 ////////////////////////////////////////////////////////////////////////////////
 //
@@ -179,10 +194,12 @@ int __not_in_flash_func(ws_executeLine)(uint8 *framebuffer, int renderLine)
 
 	ws_cycles=nec_execute(ws_cyclesByLine >> 1);
 	ws_audio_sync();
+	ws_serve_interrupts();
 
 	{
 		const uint32 second_cycles = nec_execute(ws_cyclesByLine >> 1);
 		ws_audio_sync();
+		ws_serve_interrupts();
 		ws_cycles += second_cycles;
 	}
 #ifdef DEBUG
@@ -231,7 +248,7 @@ pgDebug(buf, 4);
 				if(ws_ioRam[0xa7]!=0x35)/*Beatmania Fix*/
 				{
 					ws_ioRam[0xb6]&=~32;
-					nec_int((ws_ioRam[0xb0]+5)*4);
+					ws_int_pending |= (1u << 5);
 				}
 			}
 		}
@@ -246,7 +263,7 @@ pgDebug(buf, 4);
 pgDebug("VBLANK INT", 5);
 #endif
 			ws_ioRam[0xb6]&=~64;
-			nec_int((ws_ioRam[0xb0]+6)*4);
+			ws_int_pending |= (1u << 6);
 		}
 	}
 	if(ws_ioRam[0xa4]&&(ws_ioRam[0xb2]&128)) /*HBLANK INT*/
@@ -261,7 +278,7 @@ pgDebug("VBLANK INT", 6);
 		if((!ws_ioRam[0xa5])&&(ws_ioRam[0xb2]&128))
 		{
 			ws_ioRam[0xb6]&=~128;
-			nec_int((ws_ioRam[0xb0]+7)*4);
+			ws_int_pending |= (1u << 7);
 		}
 	}
 
@@ -271,8 +288,10 @@ pgDebug("VBLANK INT", 6);
 pgDebug("SCANLINE INT", 76);
 #endif
 		ws_ioRam[0xb6]&=~16;
-		nec_int((ws_ioRam[0xb0]+4)*4);
+		ws_int_pending |= (1u << 4);
 	}
+
+	ws_serve_interrupts();
 
   return(drawWholeScreen);
 }
