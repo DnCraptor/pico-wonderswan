@@ -94,6 +94,7 @@ void i2s_init(i2s_config_t *i2s_config) {
     i2s_config->dma_buf=malloc(i2s_config->dma_trans_count*sizeof(uint32_t));
     i2s_config->dma_buf_alt=malloc(i2s_config->dma_trans_count*sizeof(uint32_t));
     i2s_config->dma_buf_index=0;
+    i2s_config->dma_buf_pending=0;
 
     /* Direct Memory Access setup */
     i2s_config->dma_channel = dma_claim_unused_channel(true);
@@ -173,10 +174,21 @@ void i2s_write(const i2s_config_t *i2s_config,const int16_t *samples,const size_
  *     sample: pointer to an array of dma_trans_count x 32 bits samples
  */
 void i2s_dma_write(i2s_config_t *i2s_config,const int16_t *samples) {
-    /* Prepare the next block while the previous DMA transfer is still
-     * running.  The old single-buffer path waited for DMA completion first
-     * and only then copied 1 KiB of PCM, guaranteeing a gap at every block
-     * boundary. */
+    /* Never pace the emulator on the physical audio clock.  dma_buf_index
+     * names the buffer not owned by the active DMA transfer.  While DMA is
+     * busy, keep only the newest pending block in that buffer. */
+    const bool busy = dma_channel_is_busy(i2s_config->dma_channel);
+
+    if (!busy && i2s_config->dma_buf_pending) {
+        uint16_t *pending_buf = i2s_config->dma_buf_index
+            ? i2s_config->dma_buf_alt : i2s_config->dma_buf;
+        dma_channel_transfer_from_buffer_now(i2s_config->dma_channel,
+                                             pending_buf,
+                                             i2s_config->dma_trans_count);
+        i2s_config->dma_buf_index ^= 1u;
+        i2s_config->dma_buf_pending = 0;
+    }
+
     uint16_t *next_buf = i2s_config->dma_buf_index
         ? i2s_config->dma_buf_alt : i2s_config->dma_buf;
 
@@ -195,14 +207,18 @@ void i2s_dma_write(i2s_config_t *i2s_config,const int16_t *samples) {
     }
 #endif
 
-    /* Only the hand-off remains on the critical boundary.  Normally the
-     * producer arrives before DMA completes, so this wait consumes the rest
-     * of the current block and the prepared block can start immediately. */
-    dma_channel_wait_for_finish_blocking(i2s_config->dma_channel);
-    dma_channel_transfer_from_buffer_now(i2s_config->dma_channel,
-                                         next_buf,
-                                         i2s_config->dma_trans_count);
-    i2s_config->dma_buf_index ^= 1u;
+    if (!busy && !dma_channel_is_busy(i2s_config->dma_channel)) {
+        /* No older block was launched above: start this one immediately. */
+        dma_channel_transfer_from_buffer_now(i2s_config->dma_channel,
+                                             next_buf,
+                                             i2s_config->dma_trans_count);
+        i2s_config->dma_buf_index ^= 1u;
+        i2s_config->dma_buf_pending = 0;
+    } else {
+        /* Repeated producer writes replace the pending block with fresher
+         * audio instead of waiting for the active DMA transfer. */
+        i2s_config->dma_buf_pending = 1;
+    }
 }
 
 

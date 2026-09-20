@@ -47,6 +47,7 @@ typedef struct i2s_config
     uint16_t *dma_buf;
     uint16_t *dma_buf_alt;
     uint8_t dma_buf_index;
+    uint8_t dma_buf_pending;
     uint8_t volume;
 } i2s_config_t;
 

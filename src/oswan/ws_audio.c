@@ -32,6 +32,8 @@ static int32 dc_prev_in[2];
 static int32 dc_prev_out[2];
 static int16 pcm[WS_AUDIO_BLOCK * 2];
 static uint16 pcm_frames;
+static uint8 audio_rate_shift;
+static uint32 audio_pending_cycles;
 
 /* WonderSwan Color Hyper Voice (ports 64h..6Bh).  The fifth channel is a
  * signed 16-bit stereo path mixed after the four legacy channels. */
@@ -241,10 +243,7 @@ static void __not_in_flash_func(emit_sample)(void) {
     }
 
     /* The headphone path is the 10-bit unsigned L/R legacy mix shifted by
-     * five bits, then summed with signed 16-bit Hyper Voice.  Keep the
-     * hardware's unsigned legacy arithmetic and remove only its DC component
-     * at the host PCM boundary, as the reference Blip_Buffer implementation
-     * does. */
+     * five bits, then summed with signed 16-bit Hyper Voice. */
     int32 out_left = dc_block(0, (int32)(left << 5));
     int32 out_right = dc_block(1, (int32)(right << 5));
 
@@ -254,11 +253,19 @@ static void __not_in_flash_func(emit_sample)(void) {
         out_right += hyper_right;
     }
 
-    pcm[pcm_frames * 2 + 0] = clamp16(out_left);
-    pcm[pcm_frames * 2 + 1] = clamp16(out_right);
-    if (++pcm_frames == WS_AUDIO_BLOCK) {
-        i2s_dma_write(&i2s_config, pcm);
-        pcm_frames = 0;
+    const int16 sample_left = clamp16(out_left);
+    const int16 sample_right = clamp16(out_right);
+    const unsigned repeat = 1u << audio_rate_shift;
+
+    /* The host DAC always stays at 24 kHz.  At lower emulation rates one
+     * freshly generated stereo sample occupies 2/4/8 host sample slots. */
+    for (unsigned i = 0; i < repeat; ++i) {
+        pcm[pcm_frames * 2 + 0] = sample_left;
+        pcm[pcm_frames * 2 + 1] = sample_right;
+        if (++pcm_frames == WS_AUDIO_BLOCK) {
+            i2s_dma_write(&i2s_config, pcm);
+            pcm_frames = 0;
+        }
     }
 }
 
@@ -278,11 +285,12 @@ void ws_audio_reset(void) {
     nreg = 0;
     sweep_divider = 8192;
     sweep_counter = 1;
-    sample_counter = WS_AUDIO_CLOCK / WS_AUDIO_RATE;
+    sample_counter = (WS_AUDIO_CLOCK / WS_AUDIO_RATE) << audio_rate_shift;
     audio_cpu_clock = nec_get_clock();
     memset(dc_prev_in, 0, sizeof(dc_prev_in));
     memset(dc_prev_out, 0, sizeof(dc_prev_out));
     pcm_frames = 0;
+    audio_pending_cycles = 0;
     hyper_left = hyper_right = 0;
     hyper_input = hyper_control = hyper_channel_control = 0;
     hyper_dma_left = hyper_manual_left = 1;
@@ -296,10 +304,11 @@ void ws_audio_reset(void) {
 }
 
 void __not_in_flash_func(ws_audio_process)(uint32 cycles) {
-    /* ws_executeLine() feeds us roughly half a scanline at a time.  Do not
-     * advance the APU by the whole chunk and then emit all crossed samples:
-     * that quantizes a 24 kHz output edge to ~128 CPU cycles and is audible
-     * on PCM-heavy games.  Split the chunk at every output and SDMA event. */
+    /* 24 kHz is the reference path.  For the experimental lower rates keep
+     * SDMA clocked at its original rate, but accumulate PSG time and advance
+     * the four synthesis channels only at the selected 12/6/3 kHz boundary.
+     * This intentionally trades timing precision for fewer advance_channel()
+     * calls so the menu can measure their real performance cost. */
     while (cycles) {
         uint32 step = cycles;
 
@@ -317,8 +326,12 @@ void __not_in_flash_func(ws_audio_process)(uint32 cycles) {
         if (sample_counter < step)
             step = sample_counter;
 
-        for (unsigned ch = 0; ch < 4; ++ch)
-            advance_channel(ch, step);
+        if (audio_rate_shift == 0) {
+            for (unsigned ch = 0; ch < 4; ++ch)
+                advance_channel(ch, step);
+        } else {
+            audio_pending_cycles += step;
+        }
 
         sample_counter -= (uint16)step;
         if (sound_dma_control & 0x80)
@@ -333,7 +346,13 @@ void __not_in_flash_func(ws_audio_process)(uint32 cycles) {
         }
 
         if (!sample_counter) {
-            sample_counter = WS_AUDIO_CLOCK / WS_AUDIO_RATE;
+            if (audio_rate_shift != 0) {
+                const uint32 pending = audio_pending_cycles;
+                audio_pending_cycles = 0;
+                for (unsigned ch = 0; ch < 4; ++ch)
+                    advance_channel(ch, pending);
+            }
+            sample_counter = (WS_AUDIO_CLOCK / WS_AUDIO_RATE) << audio_rate_shift;
             emit_sample();
         }
     }
@@ -360,6 +379,15 @@ void ws_audio_set_enabled(int enabled) {
     audio_cpu_clock = nec_get_clock();
     if (!audio_enabled)
         pcm_frames = 0;
+}
+
+void ws_audio_set_rate_shift(unsigned shift) {
+    if (shift > 3) shift = 3;
+    if (audio_rate_shift == shift) return;
+    audio_rate_shift = (uint8)shift;
+    audio_pending_cycles = 0;
+    /* Start a fresh interval at the selected emulation rate. */
+    sample_counter = (WS_AUDIO_CLOCK / WS_AUDIO_RATE) << audio_rate_shift;
 }
 
 uint8 ws_audio_hyper_port_read(uint32 port) {
