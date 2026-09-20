@@ -292,6 +292,28 @@ static void __scratch_y("hdmi_driver") dma_handler_HDMI() {
             }
         }
 
+        /* Demo title: same post-render mechanism as FPS, centered on the
+         * last 8-pixel row of the displayed WS image. */
+        if (graphics_mode == GRAPHICSMODE_DEFAULT && graphics_demo_overlay_enabled &&
+            y >= displayed_graphics_buffer_shift_y + displayed_graphics_buffer_height - 10 &&
+            y < displayed_graphics_buffer_shift_y + displayed_graphics_buffer_height - 2) {
+            const size_t len = strlen(graphics_demo_overlay_text);
+            const int text_x = (SCREEN_WIDTH - (int)len * 6) / 2;
+            if (text_x >= 0) {
+                uint8_t *dst = activ_buf + 72 + text_x;
+                const unsigned glyph_row = (unsigned)(y -
+                    (displayed_graphics_buffer_shift_y + displayed_graphics_buffer_height - 10));
+                for (const char *q = graphics_demo_overlay_text; *q; ++q) {
+                    uint8_t bits = font_6x8[(uint8_t)*q * 8u + glyph_row];
+                    for (unsigned bit = 0; bit < 6; ++bit) {
+                        if (bits & 1u) dst[bit] = 215;
+                        bits >>= 1;
+                    }
+                    dst += 6;
+                }
+            }
+        }
+
         // memset(activ_buf,2,320);//test
 
         //ССИ

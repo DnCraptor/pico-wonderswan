@@ -247,12 +247,31 @@ static char demo_current_name[79] = { 0 };
 static uint8_t demo_duration = 0;
 static const uint16_t demo_seconds[] = { 15, 30, 45, 60, 120, 180, 300, 600 };
 
+static void demo_update_title(void) {
+    const bool visible = demo_active && demo_current_name[0] &&
+        time_us_64() - demo_game_started_at < 10000000ull;
+    if (!visible) {
+        graphics_set_demo_overlay(false, nullptr);
+        return;
+    }
+
+    char title[53];
+    const char *dot = strrchr(demo_current_name, '.');
+    size_t len = dot ? (size_t)(dot - demo_current_name) : strlen(demo_current_name);
+    if (len > sizeof(title) - 1) len = sizeof(title) - 1;
+    for (size_t i = 0; i < len; ++i)
+        title[i] = demo_current_name[i] == '_' ? ' ' : demo_current_name[i];
+    title[len] = '\0';
+    graphics_set_demo_overlay(true, title);
+}
+
 static void demo_stop(void) {
     demo_active = false;
     demo_requested = false;
     demo_advance_pending = false;
     demo_game_started_at = 0;
     demo_current_name[0] = '\0';
+    graphics_set_demo_overlay(false, nullptr);
 }
 
 int compareFileItems(const void *a, const void *b) {
@@ -984,35 +1003,6 @@ typedef struct __attribute__((packed)) {
     uint32_t global_shades[16];
 } ws_config_t;
 
-typedef struct __attribute__((packed)) {
-    uint32_t magic;
-    uint8_t version;
-    uint8_t swap_ab;
-    uint8_t rotation_mode;
-    uint8_t show_fps;
-    uint8_t audio_volume;
-    uint8_t audio_rate_shift;
-    uint8_t frequency_index;
-    uint8_t voltage_index;
-    uint8_t palette_index;
-    uint8_t reserved[7];
-    uint32_t global_shades[16];
-} ws_config_v2_t;
-
-typedef struct __attribute__((packed)) {
-    uint32_t magic;
-    uint8_t version;
-    uint8_t swap_ab;
-    uint8_t rotation_mode;
-    uint8_t show_fps;
-    uint8_t audio_volume;
-    uint8_t audio_rate_shift;
-    uint8_t frequency_index;
-    uint8_t voltage_index;
-    uint8_t palette_index;
-    uint8_t reserved[7];
-} ws_config_v1_t;
-
 static bool game_palette_linked = false;
 static uint32_t global_ws_shades[16];
 static bool global_palette_valid = false;
@@ -1049,11 +1039,21 @@ static bool load_config(void) {
         f_open(&file, "/.config/wonderswan/wonderswan.conf", FA_READ) != FR_OK)
         return false;
 
+    /* Config files are deliberately not migrated.  Reject anything that is
+       not exactly the current on-disk format before touching runtime state.
+       In particular, do not call any palette/video function here: main()
+       loads the config before core1 has initialized the video backend. */
+    if (f_size(&file) != sizeof(ws_config_t)) {
+        f_close(&file);
+        return false;
+    }
+
     ws_config_t c = {};
     UINT bytes_read = 0;
     const FRESULT fr = f_read(&file, &c, sizeof(c), &bytes_read);
     f_close(&file);
-    if (fr != FR_OK || bytes_read < sizeof(ws_config_v1_t) || c.magic != WS_CONFIG_MAGIC)
+    if (fr != FR_OK || bytes_read != sizeof(c) ||
+        c.magic != WS_CONFIG_MAGIC || c.version != WS_CONFIG_VERSION)
         return false;
 
     swap_ab = c.swap_ab != 0;
@@ -1065,26 +1065,9 @@ static bool load_config(void) {
     voltage_index = c.voltage_index <= 4 ? c.voltage_index : 0;
     palette_index = c.palette_index <= 2 ? c.palette_index : 0;
     demo_duration = c.demo_duration < count_of(demo_seconds) ? c.demo_duration : 0;
-
-    if (c.version == WS_CONFIG_VERSION && bytes_read == sizeof(c)) {
-        for (unsigned i = 0; i < 16; ++i)
-            global_ws_shades[i] = c.global_shades[i] & 0x00ffffffu;
-        global_palette_valid = true;
-    } else if (c.version == 2u && bytes_read == sizeof(ws_config_v2_t)) {
-        const ws_config_v2_t *v2 = (const ws_config_v2_t *)&c;
-        demo_duration = 0;
-        for (unsigned i = 0; i < 16; ++i)
-            global_ws_shades[i] = v2->global_shades[i] & 0x00ffffffu;
-        global_palette_valid = true;
-    } else if (c.version == 1u && bytes_read == sizeof(ws_config_v1_t)) {
-        /* Migrate the old config: its palette_index described the global
-           palette, but it did not yet store the sixteen edited RGB values. */
-        ws_set_colour_scheme(palette_index);
-        capture_global_palette();
-    } else {
-        return false;
-    }
-    apply_global_palette();
+    for (unsigned i = 0; i < 16; ++i)
+        global_ws_shades[i] = c.global_shades[i] & 0x00ffffffu;
+    global_palette_valid = true;
     return true;
 }
 
@@ -1749,6 +1732,11 @@ int main() {
     multicore_launch_core1(render_core);
     sem_release(&vga_start_semaphore);
 
+    /* Config loading above only updates host-side state.  Do not touch video
+       (including palette programming) until core1 has completed graphics_init(). */
+    while (!runtime_drivers_ready)
+        tight_loop_contents();
+
     gpio_init(PICO_DEFAULT_LED_PIN);
     gpio_set_dir(PICO_DEFAULT_LED_PIN, GPIO_OUT);
 
@@ -1823,6 +1811,7 @@ int main() {
         apply_current_palette_to_video();
 
         graphics_set_mode(GRAPHICSMODE_DEFAULT);
+        demo_update_title();
 
         frame = 0;
         int odd = 0;
@@ -1867,6 +1856,9 @@ int main() {
             }
 
             if (demo_active) {
+                if (graphics_demo_overlay_enabled &&
+                    time_us_64() - demo_game_started_at >= 10000000ull)
+                    graphics_set_demo_overlay(false, nullptr);
                 const uint8_t di = demo_duration < count_of(demo_seconds) ? demo_duration : 0;
                 if (time_us_64() - demo_game_started_at >= (uint64_t)demo_seconds[di] * 1000000ull) {
                     demo_advance_pending = true;

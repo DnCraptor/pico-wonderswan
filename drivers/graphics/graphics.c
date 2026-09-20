@@ -4,6 +4,8 @@
 
 volatile bool graphics_fps_overlay_enabled = false;
 char graphics_fps_overlay_text[8] = "--.-";
+volatile bool graphics_demo_overlay_enabled = false;
+char graphics_demo_overlay_text[53] = "";
 
 void graphics_set_fps_overlay(const bool enabled, const uint16_t fps_x10) {
     /* Disable while replacing the string: core 1 may be scanning it. */
@@ -14,6 +16,16 @@ void graphics_set_fps_overlay(const bool enabled, const uint16_t fps_x10) {
         snprintf(graphics_fps_overlay_text, sizeof(graphics_fps_overlay_text),
                  "%u.%u", fps, tenth);
         graphics_fps_overlay_enabled = true;
+    }
+}
+
+void graphics_set_demo_overlay(const bool enabled, const char *text) {
+    /* Same lock-free convention as FPS: hide while core 0 replaces text. */
+    graphics_demo_overlay_enabled = false;
+    if (enabled && text && *text) {
+        strncpy(graphics_demo_overlay_text, text, sizeof(graphics_demo_overlay_text) - 1);
+        graphics_demo_overlay_text[sizeof(graphics_demo_overlay_text) - 1] = '\0';
+        graphics_demo_overlay_enabled = true;
     }
 }
 
