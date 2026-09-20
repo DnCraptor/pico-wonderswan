@@ -159,8 +159,12 @@ int ws_memory_init(uint8 *rom, uint32 wsRomSize) {
 
     const uint32 sramSize = ws_rom_sramSize(ws_rom, romSize);
     const uint32 eepromSize = ws_rom_eepromSize(ws_rom, romSize);
-    sramAddressMask = sramSize ? sramSize - 1 : 0;
-    externalEepromAddressMask = eepromSize ? eepromSize - 1 : 0;
+    /* size 0 must yield 0xFFFFFFFF (a full 64 KB bank), NOT 0.  The 6a25c00
+       "? : 0" guard collapsed an undeclared SRAM/EEPROM bank to a single byte,
+       hanging carts that use bank 1 as work RAM without declaring save memory
+       (worked before 6a25c00, where the mask was simply size - 1). */
+    sramAddressMask = sramSize - 1;
+    externalEepromAddressMask = eepromSize - 1;
     romAddressMask = romSize - 1;
     ws_memory_update_rom_banks();
 
