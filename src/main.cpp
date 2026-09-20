@@ -1516,9 +1516,15 @@ static bool reset_config_and_offer_reboot(void) {
     while (gamepad1_bits.start)
         sleep_ms(10);
 
-    draw_window("Default", TEXTMODE_COLS / 2 - 15, TEXTMODE_ROWS / 2 - 2, 30, 5);
-    draw_text("Config deleted. Reboot now?", TEXTMODE_COLS / 2 - 13, TEXTMODE_ROWS / 2 - 1, 15, 1);
-    draw_text("START/Enter = Yes   B/Esc = No", TEXTMODE_COLS / 2 - 15, TEXTMODE_ROWS / 2 + 1, 15, 1);
+    static const char message[] = "Config deleted. Reboot now?";
+    static const char controls[] = "START/Enter = Yes   B/Esc = No";
+    const uint32_t dialog_width = sizeof(controls) + 1; /* 30 chars + 2 borders. */
+    const uint32_t dialog_x = (TEXTMODE_COLS - dialog_width) / 2;
+    const uint32_t dialog_y = TEXTMODE_ROWS / 2 - 2;
+
+    draw_window("Default", dialog_x, dialog_y, dialog_width, 5);
+    draw_text(message, dialog_x + 1 + (dialog_width - 2 - (sizeof(message) - 1)) / 2, dialog_y + 1, 15, 1);
+    draw_text(controls, dialog_x + 1, dialog_y + 3, 15, 1);
 
     for (;;) {
         if (gamepad1_bits.start) {
