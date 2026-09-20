@@ -270,6 +270,7 @@ bool isExecutable(const char pathname[255], const char *extensions) {
 }
 
 static bool temporary_flash_reclock(uint32_t target_khz);
+static void menu(bool game_loaded);
 
 bool filebrowser_loadfile(const char pathname[256]) {
     UINT bytes_read = 0;
@@ -473,9 +474,13 @@ void filebrowser(const char pathname[256], const char executables[11]) {
                 debounce = !(nespad_state & DPAD_START || keyboard_bits.start);
             }
 
-            // ESCAPE
+            // SELECT opens the emulator menu even before a cartridge is
+            // loaded.  Returning from that menu must come back to the ROM
+            // browser, not fall through into ws_init()/emulation.
             if (nespad_state & DPAD_SELECT || keyboard_bits.select) {
-                return;
+                menu(false);
+                debounce = false;
+                break;
             }
 
             if (nespad_state & DPAD_DOWN || keyboard_bits.down) {
@@ -871,7 +876,12 @@ const MenuItem menu_items[] = {
 };
 #define MENU_ITEMS_NUMBER (sizeof(menu_items) / sizeof (MenuItem))
 
-void menu() {
+static bool menu_item_selectable(uint index, bool game_loaded) {
+    const menu_type_e type = menu_items[index].type;
+    return type != NONE && (type != RETURN || game_loaded);
+}
+
+static void menu(bool game_loaded) {
     bool exit = false;
     memset((uint8_t*)SCREEN1, 0, 144 * 224);
     memset((uint8_t*)SCREEN2, 0, 144 * 224);
@@ -912,13 +922,14 @@ void menu() {
                         }
                         break;
                     case RETURN:
-                        if (gamepad1_bits.start)
+                        if (game_loaded && gamepad1_bits.start)
                             exit = true;
                         break;
 
                     case ROM_SELECT:
                         if (gamepad1_bits.start) {
-                            reboot = true;
+                            if (game_loaded)
+                                reboot = true;
                             return;
                         }
                         break;
@@ -946,20 +957,22 @@ void menu() {
                 default:
                     snprintf(result, TEXTMODE_COLS, "%s", item->text);
             }
+            if (!game_loaded && item->type == RETURN) {
+                color = 6;
+                bg_color = 0;
+            }
             draw_text(result, x, y, color, bg_color);
         }
 
         if (gamepad1_bits.down) {
-            current_item = (current_item + 1) % MENU_ITEMS_NUMBER;
-
-            if (menu_items[current_item].type == NONE)
-                current_item++;
+            do {
+                current_item = (current_item + 1) % MENU_ITEMS_NUMBER;
+            } while (!menu_item_selectable(current_item, game_loaded));
         }
         if (gamepad1_bits.up) {
-            current_item = (current_item - 1 + MENU_ITEMS_NUMBER) % MENU_ITEMS_NUMBER;
-
-            if (menu_items[current_item].type == NONE)
-                current_item--;
+            do {
+                current_item = (current_item - 1 + MENU_ITEMS_NUMBER) % MENU_ITEMS_NUMBER;
+            } while (!menu_item_selectable(current_item, game_loaded));
         }
 
         sleep_ms(125);
@@ -1064,7 +1077,16 @@ int main() {
 
     while (true) {
         graphics_set_mode(TEXTMODE_DEFAULT);
+
+        // rom_size lives in .uninitialized_data so it is intentionally not
+        // zeroed by the C runtime. Before a cartridge has been selected it
+        // must not be used as evidence that a ROM exists: leaving the browser
+        // would otherwise feed an arbitrary size/address range into ws_init()
+        // and the emulator core.
+        rom_size = 0;
         filebrowser(HOME_DIR, "ws,wsc");
+        if (rom_size == 0)
+            continue;
 
         if (!ws_init((uint8_t *)rom, rom_size)) {
             graphics_set_mode(TEXTMODE_DEFAULT);
@@ -1111,7 +1133,7 @@ int main() {
             ws_key_right = gamepad1_bits.right;
 
             if (gamepad1_bits.start && gamepad1_bits.select) {
-                menu();
+                menu(true);
                 /* Do not count time spent in the menu as an emulator slowdown. */
                 fps_started = time_us_64();
                 fps_frames = 0;
