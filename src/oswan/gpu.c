@@ -666,6 +666,14 @@ static __always_inline void ws_drawClippedSpriteLine(uint8 *framebuffer, uint16 
 //
 //
 ////////////////////////////////////////////////////////////////////////////////
+/* renderScanline is huge because the file's global -Ofast -funroll-loops
+   unrolls every loop in it (~130 KB in one function), which thrashes the XIP
+   cache. Drop the global unrolling for THIS function only (O2); the three
+   deliberate "#pragma GCC unroll 8" pixel loops below are still honoured, and
+   for this integer code O2 is ~as fast as Ofast. Stays in flash — no SRAM /
+   heap cost — but small enough to sit better in the XIP cache. */
+#pragma GCC push_options
+#pragma GCC optimize("O2")
 void ws_gpu_renderScanline(uint8 *framebuffer) {
 
     if (ws_gpu_scanline > 143)
@@ -1483,6 +1491,7 @@ void ws_gpu_renderScanline(uint8 *framebuffer) {
 	ws_background_color_rendering_time-=startTime;
 #endif
 }
+#pragma GCC pop_options
 
 ////////////////////////////////////////////////////////////////////////////////
 //

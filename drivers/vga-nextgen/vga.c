@@ -323,11 +323,27 @@ void __time_critical_func() dma_handler_VGA() {
     if (graphics_mode == GRAPHICSMODE_DEFAULT && graphics_fps_overlay_enabled &&
         y >= 2 && y < 10 && graphics_buffer_shift_x >= 48) {
         uint16_t *dst = (uint16_t *)(*output_buffer) + shift_picture / 2 + 2;
+        /* Each uint16_t carries two VGA pixels. Duplicate the 8-bit sample
+         * so HSYNC/VSYNC bits 7:6 remain valid in both pixels. */
+        const uint16_t overlay_color =
+            (uint16_t)(txt_palette[15] & 0xffu) * 0x0101u;
         const unsigned glyph_row = (unsigned)y - 2u;
+
+        /* The same VGA line template is reused for later scanlines. Clear
+         * the complete overlay rectangle before drawing this glyph row,
+         * otherwise lit pixels from earlier rows accumulate vertically. */
+        const size_t overlay_words = strlen(graphics_fps_overlay_text) * 6u;
+        uint32_t *clear = (uint32_t *)dst;
+        const uint32_t p_i = ((line_number & is_flash_line) +
+                              (frame_number & is_flash_frame)) & 1u;
+        const uint32_t border = bg_color[p_i];
+        for (size_t i = 0; i < overlay_words / 2u; ++i)
+            clear[i] = border;
+
         for (const char *p = graphics_fps_overlay_text; *p; ++p) {
             uint8_t bits = font_6x8[(uint8_t)*p * 8u + glyph_row];
             for (unsigned bit = 0; bit < 6; ++bit) {
-                if (bits & 1u) dst[bit] = txt_palette[15];
+                if (bits & 1u) dst[bit] = overlay_color;
                 bits >>= 1;
             }
             dst += 6;
