@@ -49,6 +49,17 @@ typedef struct i2s_config
     uint8_t dma_buf_index;
     uint8_t dma_buf_pending;
     uint8_t volume;
+    /* Glitch-free async output: a small ring of finished PCM blocks fed to the
+       DMA by i2s_dma_pump(). The producer (core0 ws_audio) owns ring_head; the
+       pump (also core0: ws_audio_sync + the frame-pacing wait) owns ring_tail. */
+#define I2S_RING_BLOCKS 4
+    uint16_t *dma_ring[I2S_RING_BLOCKS];
+    uint16_t *hold_buf;      /* DC-hold block played on underrun (no click) */
+    uint16_t  hold_l;
+    uint16_t  hold_r;
+    uint8_t  ring_head;
+    uint8_t  ring_tail;
+    uint8_t  ring_fill;
 } i2s_config_t;
 
 
@@ -57,6 +68,7 @@ void i2s_init(i2s_config_t *i2s_config);
 void i2s_reclock(i2s_config_t *i2s_config);
 void i2s_write(const i2s_config_t *i2s_config,const int16_t *samples,const size_t len);
 void i2s_dma_write(i2s_config_t *i2s_config,const int16_t *samples);
+void i2s_dma_pump(i2s_config_t *i2s_config);
 void i2s_volume(i2s_config_t *i2s_config,uint8_t volume);
 void i2s_increase_volume(i2s_config_t *i2s_config);
 void i2s_decrease_volume(i2s_config_t *i2s_config);

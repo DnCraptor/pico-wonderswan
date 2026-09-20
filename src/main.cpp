@@ -1289,7 +1289,7 @@ int main() {
             }
 
             while ((int64_t)(time_us_64() - next_ws_frame) < 0)
-                tight_loop_contents();
+                i2s_dma_pump(&i2s_config);   // feed audio DMA while pacing the frame
             next_ws_frame += 13250;
             // Do not accumulate a large delay after menus or other long pauses.
             const uint64_t now = time_us_64();

@@ -364,6 +364,11 @@ void __not_in_flash_func(ws_audio_sync)(void) {
      * generation, filters, sound DMA or host PCM work is performed. */
     if (!audio_enabled) return;
 
+    /* Keep the audio DMA continuously fed. i2s_dma_write() alone runs only
+     * ~1.25x per frame (one 256-sample block), far less often than the PIO
+     * FIFO drains, so pump here too (called ~twice per scanline). */
+    i2s_dma_pump(&i2s_config);
+
     const uint32 now = nec_get_clock();
     const uint32 elapsed = now - audio_cpu_clock;
     if (elapsed) {

@@ -95,6 +95,11 @@ void i2s_init(i2s_config_t *i2s_config) {
     i2s_config->dma_buf_alt=malloc(i2s_config->dma_trans_count*sizeof(uint32_t));
     i2s_config->dma_buf_index=0;
     i2s_config->dma_buf_pending=0;
+    for (unsigned _i = 0; _i < I2S_RING_BLOCKS; ++_i)
+        i2s_config->dma_ring[_i] = malloc(i2s_config->dma_trans_count * sizeof(uint32_t));
+    i2s_config->hold_buf = malloc(i2s_config->dma_trans_count * sizeof(uint32_t));
+    i2s_config->hold_l = i2s_config->hold_r = 0;
+    i2s_config->ring_head = i2s_config->ring_tail = i2s_config->ring_fill = 0;
 
     /* Direct Memory Access setup */
     i2s_config->dma_channel = dma_claim_unused_channel(true);
@@ -173,52 +178,57 @@ void i2s_write(const i2s_config_t *i2s_config,const int16_t *samples,const size_
  * i2s_config: I2S context obtained by i2s_get_default_config()
  *     sample: pointer to an array of dma_trans_count x 32 bits samples
  */
-void i2s_dma_write(i2s_config_t *i2s_config,const int16_t *samples) {
-    /* Never pace the emulator on the physical audio clock.  dma_buf_index
-     * names the buffer not owned by the active DMA transfer.  While DMA is
-     * busy, keep only the newest pending block in that buffer. */
-    const bool busy = dma_channel_is_busy(i2s_config->dma_channel);
+void i2s_dma_pump(i2s_config_t *i2s_config) {
+    /* Feed the DMA the moment it goes idle so the I2S PIO FIFO is never
+       starved. Called from the scanline hot path and the frame-pacing wait,
+       both on core0, so no locking is needed. On underrun emit hold_buf filled
+       with the last output level (DC hold) instead of stalling to zero, which
+       would click. */
+    if (dma_channel_is_busy(i2s_config->dma_channel)) return;
 
-    if (!busy && i2s_config->dma_buf_pending) {
-        uint16_t *pending_buf = i2s_config->dma_buf_index
-            ? i2s_config->dma_buf_alt : i2s_config->dma_buf;
-        dma_channel_transfer_from_buffer_now(i2s_config->dma_channel,
-                                             pending_buf,
-                                             i2s_config->dma_trans_count);
-        i2s_config->dma_buf_index ^= 1u;
-        i2s_config->dma_buf_pending = 0;
-    }
-
-    uint16_t *next_buf = i2s_config->dma_buf_index
-        ? i2s_config->dma_buf_alt : i2s_config->dma_buf;
-
-#ifdef AUDIO_PWM
-    for (uint16_t i = 0; i < i2s_config->dma_trans_count * 2; ++i) {
-        next_buf[i] =
-            (uint16_t)((65536 / 2 + samples[i]) >> (4 + i2s_config->volume));
-    }
-#else
-    if(i2s_config->volume==0) {
-        memcpy(next_buf,samples,i2s_config->dma_trans_count*sizeof(int32_t));
+    uint16_t *blk;
+    const uint16_t n = i2s_config->dma_trans_count;
+    if (i2s_config->ring_fill) {
+        blk = i2s_config->dma_ring[i2s_config->ring_tail];
+        i2s_config->ring_tail = (uint8_t)((i2s_config->ring_tail + 1u) % I2S_RING_BLOCKS);
+        i2s_config->ring_fill--;
+        /* Remember this block's last sample so a later underrun holds its level. */
+        i2s_config->hold_l = blk[(n - 1) * 2 + 0];
+        i2s_config->hold_r = blk[(n - 1) * 2 + 1];
     } else {
-        for(uint16_t i=0;i<i2s_config->dma_trans_count*2;i++) {
-            next_buf[i] = samples[i]>>i2s_config->volume;
+        blk = i2s_config->hold_buf;
+        for (uint16_t i = 0; i < n; ++i) {
+            blk[i * 2 + 0] = i2s_config->hold_l;
+            blk[i * 2 + 1] = i2s_config->hold_r;
         }
     }
+    dma_channel_transfer_from_buffer_now(i2s_config->dma_channel, blk, n);
+}
+
+void i2s_dma_write(i2s_config_t *i2s_config,const int16_t *samples) {
+    /* Producer: never wait on the audio clock. Enqueue this block (with volume
+       applied) into the ring and let i2s_dma_pump() feed the DMA. One slot is
+       reserved for the block currently in flight, so drop the oldest-unqueued
+       only when the ring is genuinely full (a real overrun; rare). */
+    i2s_dma_pump(i2s_config);
+    if (i2s_config->ring_fill >= I2S_RING_BLOCKS - 1)
+        return;
+
+    uint16_t *dst = i2s_config->dma_ring[i2s_config->ring_head];
+#ifdef AUDIO_PWM
+    for (uint16_t i = 0; i < i2s_config->dma_trans_count * 2; ++i)
+        dst[i] = (uint16_t)((65536 / 2 + samples[i]) >> (4 + i2s_config->volume));
+#else
+    if (i2s_config->volume == 0)
+        memcpy(dst, samples, i2s_config->dma_trans_count * sizeof(int32_t));
+    else
+        for (uint16_t i = 0; i < i2s_config->dma_trans_count * 2; ++i)
+            dst[i] = samples[i] >> i2s_config->volume;
 #endif
 
-    if (!busy && !dma_channel_is_busy(i2s_config->dma_channel)) {
-        /* No older block was launched above: start this one immediately. */
-        dma_channel_transfer_from_buffer_now(i2s_config->dma_channel,
-                                             next_buf,
-                                             i2s_config->dma_trans_count);
-        i2s_config->dma_buf_index ^= 1u;
-        i2s_config->dma_buf_pending = 0;
-    } else {
-        /* Repeated producer writes replace the pending block with fresher
-         * audio instead of waiting for the active DMA transfer. */
-        i2s_config->dma_buf_pending = 1;
-    }
+    i2s_config->ring_head = (uint8_t)((i2s_config->ring_head + 1u) % I2S_RING_BLOCKS);
+    i2s_config->ring_fill++;
+    i2s_dma_pump(i2s_config);
 }
 
 
