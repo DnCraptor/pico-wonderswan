@@ -351,16 +351,17 @@ void __time_critical_func() dma_handler_VGA() {
     }
 
     /* Demo title: same proven post-render path as FPS, on the last 8-pixel
-     * row of the WS image. It never changes scanout control flow. */
+     * row of the physical 320x240 output. It never changes scanout control flow. */
+    const int output_y = (int)(screen_line / 2);
     if (graphics_mode == GRAPHICSMODE_DEFAULT && graphics_demo_overlay_enabled &&
-        y >= (int)graphics_buffer_height - 10 && y < (int)graphics_buffer_height - 2) {
+        output_y >= N_lines_visible / 2 - 10 && output_y < N_lines_visible / 2 - 2) {
         const size_t len = strlen(graphics_demo_overlay_text);
         const int text_x = ((int)visible_line_size - (int)len * 6) / 2;
         if (text_x >= 0) {
             uint16_t *dst = (uint16_t *)(*output_buffer) + shift_picture / 2 + text_x;
             const uint16_t overlay_color =
                 (uint16_t)(txt_palette[15] & 0xffu) * 0x0101u;
-            const unsigned glyph_row = (unsigned)(y - ((int)graphics_buffer_height - 10));
+            const unsigned glyph_row = (unsigned)(output_y - (N_lines_visible / 2 - 10));
             for (const char *q = graphics_demo_overlay_text; *q; ++q) {
                 uint8_t bits = font_6x8[(uint8_t)*q * 8u + glyph_row];
                 for (unsigned bit = 0; bit < 6; ++bit) {
