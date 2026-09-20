@@ -43,6 +43,7 @@
 uint32	ws_cycles;
 uint32	ws_skip;
 uint32	ws_cyclesByLine=256;
+uint8	ws_gpu_scroll_latch[4];   // 0x10 X1, 0x11 Y1, 0x12 X2, 0x13 Y2, sampled per line
 
 ////////////////////////////////////////////////////////////////////////////////
 //
@@ -166,6 +167,15 @@ int __not_in_flash_func(ws_executeLine)(uint8 *framebuffer, int renderLine)
 
 	// update scanline register
 	ws_ioRam[2]=ws_gpu_scanline;
+
+	/* Latch the background/foreground scroll at the start of the line (the HW
+	   samples it at HBlank). renderScanline() runs after this line's CPU, so a
+	   mid-line write meant for the NEXT line would otherwise bleed into this
+	   line's render and make the far background snap. */
+	ws_gpu_scroll_latch[0]=ws_ioRam[0x10];
+	ws_gpu_scroll_latch[1]=ws_ioRam[0x11];
+	ws_gpu_scroll_latch[2]=ws_ioRam[0x12];
+	ws_gpu_scroll_latch[3]=ws_ioRam[0x13];
 
 	ws_cycles=nec_execute(ws_cyclesByLine >> 1);
 	ws_audio_sync();

@@ -596,6 +596,7 @@ enum menu_type_e {
     SAVE,
     LOAD,
     ROM_SELECT,
+    SHOW_PALETTES,
     RETURN,
 };
 
@@ -852,6 +853,86 @@ static bool apply_audio_rate() {
     ws_audio_set_rate_shift(audio_rate_shift);
     return false;
 }
+
+static bool mono_ws_rom_loaded(bool game_loaded) {
+    if (!game_loaded) return false;
+    const char *dot = strrchr(filename, '.');
+    return dot && (dot[1] == 'w' || dot[1] == 'W') &&
+           (dot[2] == 's' || dot[2] == 'S') && dot[3] == '\0';
+}
+
+static void palette_preview_hex_digit(uint8_t *buffer, int x, int y, unsigned digit, uint8_t color) {
+    static const uint8_t digits[16][5] = {
+        { 7, 5, 5, 5, 7 }, { 2, 6, 2, 2, 7 },
+        { 7, 1, 7, 4, 7 }, { 7, 1, 7, 1, 7 },
+        { 5, 5, 7, 1, 1 }, { 7, 4, 7, 1, 7 },
+        { 7, 4, 7, 5, 7 }, { 7, 1, 1, 1, 1 },
+        { 7, 5, 7, 5, 7 }, { 7, 5, 7, 1, 7 },
+        { 7, 5, 7, 5, 5 }, { 6, 5, 6, 5, 6 },
+        { 7, 4, 4, 4, 7 }, { 6, 5, 5, 5, 6 },
+        { 7, 4, 7, 4, 7 }, { 7, 4, 7, 4, 4 }
+    };
+    if (digit > 15) return;
+    for (int row = 0; row < 5; ++row)
+        for (int col = 0; col < 3; ++col)
+            if (digits[digit][row] & (4u >> col))
+                buffer[(y + row) * 224 + x + col] = color;
+}
+
+static void palette_preview_rgb(uint8_t *buffer, int x, int y, uint32_t rgb, uint8_t color) {
+    for (int digit = 0; digit < 6; ++digit) {
+        const unsigned shift = (unsigned)(5 - digit) * 4u;
+        palette_preview_hex_digit(buffer, x + digit * 4, y, (rgb >> shift) & 0x0fu, color);
+    }
+}
+
+static uint8_t palette_preview_contrast(unsigned shade) {
+    const uint32_t bg = ws_shades[shade] & 0x00ffffffu;
+    const uint32_t c0 = ws_shades[0] & 0x00ffffffu;
+    const uint32_t c15 = ws_shades[15] & 0x00ffffffu;
+    const int br = (bg >> 16) & 0xff, bgc = (bg >> 8) & 0xff, bb = bg & 0xff;
+    const int r0 = (c0 >> 16) & 0xff, g0 = (c0 >> 8) & 0xff, b0 = c0 & 0xff;
+    const int r15 = (c15 >> 16) & 0xff, g15 = (c15 >> 8) & 0xff, b15 = c15 & 0xff;
+    const unsigned d0 = (unsigned)((br-r0)*(br-r0) + (bgc-g0)*(bgc-g0) + (bb-b0)*(bb-b0));
+    const unsigned d15 = (unsigned)((br-r15)*(br-r15) + (bgc-g15)*(bgc-g15) + (bb-b15)*(bb-b15));
+    return d0 >= d15 ? 0 : 15;
+}
+
+static void show_current_palettes(void) {
+    uint8_t *buffer = (uint8_t *)SCREEN3;
+
+    /* Mono WS framebuffer colours are the sixteen current shade indices. */
+    for (unsigned shade = 0; shade < 16; ++shade) {
+        const int x0 = (int)(shade & 3u) * 56;
+        const int y0 = (int)(shade >> 2) * 36;
+        for (int y = y0; y < y0 + 36; ++y)
+            memset(buffer + y * 224 + x0, (int)shade, 56);
+    }
+
+    graphics_set_buffer(buffer, 224, 144);
+    graphics_set_mode(GRAPHICSMODE_DEFAULT);
+    ws_gpu_refresh_palette();
+
+    /* Each swatch contains its shade index and the actual RRGGBB value. */
+    for (unsigned shade = 0; shade < 16; ++shade) {
+        const int x0 = (int)(shade & 3u) * 56;
+        const int y0 = (int)(shade >> 2) * 36;
+        const uint8_t text = palette_preview_contrast(shade);
+        palette_preview_hex_digit(buffer, x0 + 13, y0 + 15, shade, text);
+        palette_preview_rgb(buffer, x0 + 21, y0 + 15, ws_shades[shade] & 0x00ffffffu, text);
+    }
+
+    /* Display-only page. START, B or SELECT returns to the normal menu. */
+    while (gamepad1_bits.start || gamepad1_bits.b || gamepad1_bits.select)
+        sleep_ms(20);
+    while (!(gamepad1_bits.start || gamepad1_bits.b || gamepad1_bits.select))
+        sleep_ms(20);
+    while (gamepad1_bits.start || gamepad1_bits.b || gamepad1_bits.select)
+        sleep_ms(20);
+
+    graphics_set_mode(TEXTMODE_DEFAULT);
+}
+
 const MenuItem menu_items[] = {
         { "Swap AB <> BA: %s", ARRAY, &swap_ab, nullptr, 1, { "NO ", "YES" }},
         { "Screen rotation: %s", ARRAY, &rotation_mode, nullptr, 3, { "Auto", "Landscape", "Portrait ", "Manual   " }},
@@ -890,6 +971,7 @@ const MenuItem menu_items[] = {
         { "Voltage: %s", ARRAY, &voltage_index, &overclock, 4, { "Auto", "1.50V", "1.60V", "1.65V", "1.70V" } },
 #endif
         { "Press START / Enter to apply", NONE },
+        { "Show current palettes", SHOW_PALETTES },
         { "Reset to ROM select", ROM_SELECT },
         { "Return to game", RETURN }
 };
@@ -897,7 +979,9 @@ const MenuItem menu_items[] = {
 
 static bool menu_item_selectable(uint index, bool game_loaded) {
     const menu_type_e type = menu_items[index].type;
-    return type != NONE && (type != RETURN || game_loaded);
+    return type != NONE &&
+           (type != RETURN || game_loaded) &&
+           (type != SHOW_PALETTES || mono_ws_rom_loaded(game_loaded));
 }
 
 static void menu(bool game_loaded) {
@@ -952,6 +1036,11 @@ static void menu(bool game_loaded) {
                             exit = true;
                         break;
 
+                    case SHOW_PALETTES:
+                        if (gamepad1_bits.start && mono_ws_rom_loaded(game_loaded))
+                            show_current_palettes();
+                        break;
+
                     case ROM_SELECT:
                         if (gamepad1_bits.start) {
                             if (game_loaded)
@@ -983,7 +1072,8 @@ static void menu(bool game_loaded) {
                 default:
                     snprintf(result, TEXTMODE_COLS, "%s", item->text);
             }
-            if (!game_loaded && item->type == RETURN) {
+            if ((!game_loaded && item->type == RETURN) ||
+                (item->type == SHOW_PALETTES && !mono_ws_rom_loaded(game_loaded))) {
                 color = 6;
                 bg_color = 0;
             }

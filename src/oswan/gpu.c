@@ -40,6 +40,7 @@
 extern uint8	*internalRam;
 #else
 extern uint8 internalRam[0x10000];
+extern uint8 ws_gpu_scroll_latch[4];
 #endif
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -697,8 +698,8 @@ void ws_gpu_renderScanline(uint8 *framebuffer) {
 #endif
     // render background layer
     if (ws_ioRam[0x00] & 0x01) {
-        int ws_bgScroll_x = ws_ioRam[0x10];
-        int ws_bgScroll_y = ws_ioRam[0x11];
+        int ws_bgScroll_x = ws_gpu_scroll_latch[0];
+        int ws_bgScroll_y = ws_gpu_scroll_latch[1];
 
         // seek to the first tile
         ws_bgScroll_y = (ws_bgScroll_y + ws_gpu_scanline) & 0xff;
@@ -923,8 +924,8 @@ void ws_gpu_renderScanline(uint8 *framebuffer) {
         int ws_fgWindow_y0 = ws_ioRam[0x09];
         int ws_fgWindow_x1 = ws_ioRam[0x0a];
         int ws_fgWindow_y1 = ws_ioRam[0x0b];
-        int ws_fgScroll_x = ws_ioRam[0x12];
-        int ws_fgScroll_y = ws_ioRam[0x13];
+        int ws_fgScroll_x = ws_gpu_scroll_latch[2];
+        int ws_fgScroll_y = ws_gpu_scroll_latch[3];
 
         int windowMode = ws_ioRam[0x00] & 0x30;
 
