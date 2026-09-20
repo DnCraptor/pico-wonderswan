@@ -239,6 +239,22 @@ typedef struct __attribute__((__packed__)) {
 constexpr int max_files = 320;
 file_item_t *fileItems = (file_item_t *) (&SCREEN1[0][0] + TEXTMODE_COLS * TEXTMODE_ROWS * 2);
 
+static bool demo_requested = false;
+static bool demo_active = false;
+static bool demo_advance_pending = false;
+static uint64_t demo_game_started_at = 0;
+static char demo_current_name[79] = { 0 };
+static uint8_t demo_duration = 0;
+static const uint16_t demo_seconds[] = { 15, 30, 45, 60, 120, 180, 300, 600 };
+
+static void demo_stop(void) {
+    demo_active = false;
+    demo_requested = false;
+    demo_advance_pending = false;
+    demo_game_started_at = 0;
+    demo_current_name[0] = '\0';
+}
+
 int compareFileItems(const void *a, const void *b) {
     const auto *itemA = (file_item_t *) a;
     const auto *itemB = (file_item_t *) b;
@@ -287,14 +303,14 @@ bool filebrowser_loadfile(const char pathname[256]) {
     FILINFO fileinfo;
     if (FR_OK != f_stat(pathname, &fileinfo) || fileinfo.fsize == 0) {
         draw_text("ERROR: ROM not found or empty!", window_x + 1, window_y + 2, 13, 1);
-        sleep_ms(5000);
+        sleep_ms(demo_active ? 1500 : 5000);
         return false;
     }
 
     const uint32_t load_size = fileinfo.fsize;
     if (((16384 - 64) << 10) < load_size) {
         draw_text("ERROR: ROM too large! Canceled!!", window_x + 1, window_y + 2, 13, 1);
-        sleep_ms(5000);
+        sleep_ms(demo_active ? 1500 : 5000);
         return false;
     }
 
@@ -305,7 +321,7 @@ bool filebrowser_loadfile(const char pathname[256]) {
         const size_t capacity = wonderswan_qspi_rom_capacity();
         if (load_size > capacity) {
             draw_text("ERROR: ROM too large for PSRAM!", window_x + 1, window_y + 2, 13, 1);
-            sleep_ms(5000);
+            sleep_ms(demo_active ? 1500 : 5000);
             return false;
         }
 
@@ -325,14 +341,14 @@ bool filebrowser_loadfile(const char pathname[256]) {
         const uint32_t firmware_end = (uint32_t)((uintptr_t)&__flash_binary_end - XIP_BASE);
         if (firmware_end > FLASH_TARGET_OFFSET) {
             draw_text("ERROR: Firmware overlaps ROM flash area!", window_x + 1, window_y + 2, 13, 1);
-            sleep_ms(5000);
+            sleep_ms(demo_active ? 1500 : 5000);
             return false;
         }
 
         const uint32_t flash_size = detect_flash_size_bytes();
         if (FLASH_TARGET_OFFSET >= flash_size || load_size > flash_size - FLASH_TARGET_OFFSET) {
             draw_text("ERROR: ROM too large for flash!", window_x + 1, window_y + 2, 13, 1);
-            sleep_ms(5000);
+            sleep_ms(demo_active ? 1500 : 5000);
             return false;
         }
 
@@ -340,7 +356,7 @@ bool filebrowser_loadfile(const char pathname[256]) {
         const bool need_clock_restore = original_sys_khz > 252000u;
         if (need_clock_restore && !temporary_flash_reclock(252000u)) {
             draw_text("ERROR: Cannot lower clock for flash!", window_x + 1, window_y + 2, 13, 1);
-            sleep_ms(5000);
+            sleep_ms(demo_active ? 1500 : 5000);
             return false;
         }
 
@@ -383,7 +399,7 @@ bool filebrowser_loadfile(const char pathname[256]) {
 
     if (!load_ok) {
         draw_text("ERROR: ROM load failed!", window_x + 1, window_y + 2, 13, 1);
-        sleep_ms(5000);
+        sleep_ms(demo_active ? 1500 : 5000);
         return false;
     }
 
@@ -392,8 +408,59 @@ bool filebrowser_loadfile(const char pathname[256]) {
     return true;
 }
 
+
+static bool demo_load_next_rom(const char *after_name) {
+    if (FR_OK != f_mount(&fs, "SD", 1))
+        return false;
+
+    char after[79] = { 0 };
+    if (after_name) {
+        strncpy(after, after_name, sizeof(after) - 1);
+        after[sizeof(after) - 1] = '\0';
+    }
+
+    /* Find the next name alphabetically. If a ROM fails to load, advance
+       past it instead of dropping out of Demo mode. */
+    for (;;) {
+        DIR dir;
+        FILINFO info;
+        if (FR_OK != f_opendir(&dir, HOME_DIR))
+            return false;
+
+        char best[79] = { 0 };
+        while (f_readdir(&dir, &info) == FR_OK && info.fname[0] != '\0') {
+            if (info.fattrib & AM_DIR)
+                continue;
+            if (!isExecutable(info.fname, "ws,wsc"))
+                continue;
+            if (after[0] && strcmp(info.fname, after) <= 0)
+                continue;
+            if (!best[0] || strcmp(info.fname, best) < 0) {
+                strncpy(best, info.fname, sizeof(best) - 1);
+                best[sizeof(best) - 1] = '\0';
+            }
+        }
+        f_closedir(&dir);
+        if (!best[0])
+            return false;
+
+        char pathname[256];
+        snprintf(pathname, sizeof(pathname), "%s\\%s", HOME_DIR, best);
+        if (filebrowser_loadfile(pathname)) {
+            strncpy(demo_current_name, best, sizeof(demo_current_name) - 1);
+            demo_current_name[sizeof(demo_current_name) - 1] = '\0';
+            demo_game_started_at = time_us_64();
+            return true;
+        }
+
+        strncpy(after, best, sizeof(after) - 1);
+        after[sizeof(after) - 1] = '\0';
+    }
+}
+
 void filebrowser(const char pathname[256], const char executables[11]) {
     bool debounce = true;
+    bool demo_debounce = false;
     char basepath[256];
     char tmp[TEXTMODE_COLS + 1];
     strcpy(basepath, pathname);
@@ -482,8 +549,18 @@ void filebrowser(const char pathname[256], const char executables[11]) {
             // browser, not fall through into ws_init()/emulation.
             if (nespad_state & DPAD_SELECT || keyboard_bits.select) {
                 menu(false);
+                if (demo_requested)
+                    return;
                 debounce = false;
                 break;
+            }
+
+            const bool demo_button = (nespad_state & DPAD_B) || keyboard_bits.b;
+            if (!demo_button)
+                demo_debounce = true;
+            if (demo_debounce && demo_button) {
+                demo_requested = true;
+                return;
             }
 
             if (nespad_state & DPAD_DOWN || keyboard_bits.down) {
@@ -597,6 +674,7 @@ enum menu_type_e {
 
     SAVE,
     LOAD,
+    START_DEMO,
     ROM_SELECT,
     SHOW_PALETTES,
     GAME_PALETTE,
@@ -888,7 +966,23 @@ static bool apply_audio_rate() {
 static bool mono_ws_rom_loaded(bool game_loaded);
 
 #define WS_CONFIG_MAGIC 0x31434657u /* WFC1 */
-#define WS_CONFIG_VERSION 2u
+#define WS_CONFIG_VERSION 3u
+
+typedef struct __attribute__((packed)) {
+    uint32_t magic;
+    uint8_t version;
+    uint8_t swap_ab;
+    uint8_t rotation_mode;
+    uint8_t show_fps;
+    uint8_t audio_volume;
+    uint8_t audio_rate_shift;
+    uint8_t frequency_index;
+    uint8_t voltage_index;
+    uint8_t palette_index;
+    uint8_t demo_duration;
+    uint8_t reserved[6];
+    uint32_t global_shades[16];
+} ws_config_t;
 
 typedef struct __attribute__((packed)) {
     uint32_t magic;
@@ -903,7 +997,7 @@ typedef struct __attribute__((packed)) {
     uint8_t palette_index;
     uint8_t reserved[7];
     uint32_t global_shades[16];
-} ws_config_t;
+} ws_config_v2_t;
 
 typedef struct __attribute__((packed)) {
     uint32_t magic;
@@ -970,10 +1064,17 @@ static bool load_config(void) {
     frequency_index = c.frequency_index < count_of(frequencies) ? c.frequency_index : 0;
     voltage_index = c.voltage_index <= 4 ? c.voltage_index : 0;
     palette_index = c.palette_index <= 2 ? c.palette_index : 0;
+    demo_duration = c.demo_duration < count_of(demo_seconds) ? c.demo_duration : 0;
 
     if (c.version == WS_CONFIG_VERSION && bytes_read == sizeof(c)) {
         for (unsigned i = 0; i < 16; ++i)
             global_ws_shades[i] = c.global_shades[i] & 0x00ffffffu;
+        global_palette_valid = true;
+    } else if (c.version == 2u && bytes_read == sizeof(ws_config_v2_t)) {
+        const ws_config_v2_t *v2 = (const ws_config_v2_t *)&c;
+        demo_duration = 0;
+        for (unsigned i = 0; i < 16; ++i)
+            global_ws_shades[i] = v2->global_shades[i] & 0x00ffffffu;
         global_palette_valid = true;
     } else if (c.version == 1u && bytes_read == sizeof(ws_config_v1_t)) {
         /* Migrate the old config: its palette_index described the global
@@ -1001,6 +1102,7 @@ static bool save_config(void) {
     c.frequency_index = frequency_index;
     c.voltage_index = voltage_index;
     c.palette_index = palette_index;
+    c.demo_duration = demo_duration;
     if (!global_palette_valid) {
         ws_set_colour_scheme(palette_index);
         capture_global_palette();
@@ -1408,7 +1510,9 @@ const MenuItem menu_items[] = {
 #if PICO_RP2350
         { "Voltage: %s", ARRAY, &voltage_index, &overclock, 4, { "Auto", "1.50V", "1.60V", "1.65V", "1.70V" } },
 #endif
+        { "Demo game time: %s", ARRAY, &demo_duration, nullptr, 7, { "15 sec", "30 sec", "45 sec", "1 min ", "2 min ", "3 min ", "5 min ", "10 min" } },
         { "Press START / Enter to apply", NONE },
+        { "Start Demo", START_DEMO },
         { "Show current palettes", SHOW_PALETTES },
         { "Save colors for this game", GAME_PALETTE, nullptr, &game_palette_action },
         { "Reset to ROM select", ROM_SELECT },
@@ -1488,8 +1592,19 @@ static void menu(bool game_loaded) {
                     case GAME_PALETTE:
                         break;
 
+                    case START_DEMO:
+                        if (gamepad1_bits.start) {
+                            demo_requested = true;
+                            if (game_loaded)
+                                reboot = true;
+                            save_config();
+                            return;
+                        }
+                        break;
+
                     case ROM_SELECT:
                         if (gamepad1_bits.start) {
+                            demo_stop();
                             if (game_loaded)
                                 reboot = true;
                             save_config();
@@ -1656,23 +1771,38 @@ int main() {
     /* Ensure the temporary backing directory exists before cartridge startup. */
     if (f_mount(&fs, "", 1) == FR_OK) f_mkdir("/tmp");
 
+    bool need_browser = true;
     while (true) {
-        graphics_set_mode(TEXTMODE_DEFAULT);
+        if (need_browser) {
+            graphics_set_mode(TEXTMODE_DEFAULT);
+            /* The browser owns a manual/non-Demo state. A Demo request made
+               inside it is the only path allowed to re-enter Demo mode. */
+            demo_stop();
+            rom_size = 0;
+            filebrowser(HOME_DIR, "ws,wsc");
 
-        // rom_size lives in .uninitialized_data so it is intentionally not
-        // zeroed by the C runtime. Before a cartridge has been selected it
-        // must not be used as evidence that a ROM exists: leaving the browser
-        // would otherwise feed an arbitrary size/address range into ws_init()
-        // and the emulator core.
-        rom_size = 0;
-        filebrowser(HOME_DIR, "ws,wsc");
-        if (rom_size == 0)
-            continue;
+            if (demo_requested) {
+                demo_requested = false;
+                demo_active = true;
+                demo_current_name[0] = '\0';
+                if (!demo_load_next_rom(nullptr)) {
+                    demo_stop();
+                    continue;
+                }
+            } else if (rom_size == 0) {
+                continue;
+            }
+            need_browser = false;
+        }
 
         if (!ws_init((uint8_t *)rom, rom_size)) {
             graphics_set_mode(TEXTMODE_DEFAULT);
             draw_text("ERROR: not enough RAM for cartridge save memory!", 0, 0, 13, 0);
-            sleep_ms(5000);
+            sleep_ms(demo_active ? 1500 : 5000);
+            if (demo_active && demo_load_next_rom(demo_current_name))
+                continue;
+            demo_stop();
+            need_browser = true;
             continue;
         }
         if (filename[strlen(filename)-1]=='c'|| filename[strlen(filename)-1]=='C') {
@@ -1712,6 +1842,9 @@ int main() {
 #endif
         while (!reboot) {
             if (fxPressedV) {
+                /* A quick-state operation takes ownership of the current ROM;
+                   stop Demo so it cannot replace that ROM afterwards. */
+                demo_stop();
                 const uint8_t slot = fxPressedV;
                 fxPressedV = 0;
                 save_slot = slot;
@@ -1731,6 +1864,15 @@ int main() {
                 fps_started = time_us_64();
                 fps_frames = 0;
                 graphics_set_fps_overlay(show_fps, 0);
+            }
+
+            if (demo_active) {
+                const uint8_t di = demo_duration < count_of(demo_seconds) ? demo_duration : 0;
+                if (time_us_64() - demo_game_started_at >= (uint64_t)demo_seconds[di] * 1000000ull) {
+                    demo_advance_pending = true;
+                    reboot = true;
+                    continue;
+                }
             }
 
             // WonderSwan has no Select button. NES Select / keyboard
@@ -1883,7 +2025,30 @@ int main() {
             tight_loop_contents();
         }
 
+        ws_done();
         reboot = false;
+
+        if (demo_requested) {
+            demo_requested = false;
+            demo_active = true;
+            demo_advance_pending = false;
+            demo_current_name[0] = '\0';
+            if (demo_load_next_rom(nullptr))
+                continue;
+            demo_stop();
+        } else if (demo_active && demo_advance_pending) {
+            demo_advance_pending = false;
+            if (demo_load_next_rom(demo_current_name))
+                continue;
+            demo_stop();
+        } else if (demo_active) {
+            /* Any other path out of emulation is a manual exit. */
+            demo_stop();
+        }
+
+        /* Never let stale Demo state leak into the browser. */
+        demo_stop();
+        need_browser = true;
     }
     __unreachable();
 }
