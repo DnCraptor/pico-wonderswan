@@ -57,7 +57,11 @@ static void __not_in_flash_func(ws_memory_update_rom_banks)(void) {
     const uint32 group = (uint32)(ws_ioRam[IO_ROM_BANK_BASE_SELECTOR] & 0x0f) << 4;
     for (uint32 bank = 4; bank < 16; ++bank) {
         const uint32 romBank = 256u - (group | bank);
-        romBankBase[bank] = (romSize - (romBank << 16)) & romAddressMask;
+        /* Linear banks 4..15 must read exactly as they did before 6a25c00
+           (unmasked). The & romAddressMask was added to keep flash-backed ROM
+           inside the XIP window, but it aliases the PSRAM-backed mirror to the
+           wrong bytes, hanging >1 MB carts (e.g. Guilty Gear Petit 2) on M2. */
+        romBankBase[bank] = romSize - (romBank << 16);
     }
 }
 
@@ -121,7 +125,7 @@ uint8_t __not_in_flash_func(cpu_readmem20)(uint32_t addr) {
         return ws_rom[romBankBase[bank] + offset];
 
     const uint32 romBank = 256u - (((uint32)(ws_ioRam[IO_ROM_BANK_BASE_SELECTOR] & 0x0f) << 4) | (bank & 0x0f));
-    return ws_rom[(offset + romSize - (romBank << 16)) & romAddressMask];
+    return ws_rom[offset + romSize - (romBank << 16)];
 }
 
 /* Instruction and immediate fetches overwhelmingly come from cartridge ROM.
