@@ -129,12 +129,12 @@ typedef enum { AL,AH,CL,CH,DL,DH,BL,BH,SPL,SPH,BPL,BPH,IXL,IXH,IYL,IYH } BREGS;
 #define CLKM(v30MZm,v30MZ) { nec_ICount-=( ModRM >=0xc0 )?v30MZ:v30MZm; }
 #define CLKR(v30MZo,v30MZe,vall) { if (ModRM >=0xc0) nec_ICount-=vall; else nec_ICount-=(I.ip&1)?v30MZo:v30MZe; }
 #else
-#define CLKS(v20,v30,v33) { const UINT32 ccount=(v20<<16)|(v30<<8)|v33; nec_ICount-=(ccount>>cpu_type)&0x7f; nec_TotalClock+=(ccount>>cpu_type)&0x7f; }
+#define CLKS(v20,v30,v33) { const UINT32 ccount=(v20<<16)|(v30<<8)|v33; nec_ICount-=(ccount>>cpu_type)&0x7f; }
 
-#define CLK(all) { nec_ICount-=all; nec_TotalClock+=all; }
-#define CLKW(v30MZo,v30MZe) { nec_ICount-=(I.ip&1)?v30MZo:v30MZe; nec_TotalClock+=(I.ip&1)?v30MZo:v30MZe; }
-#define CLKM(v30MZm,v30MZ) { nec_ICount-=( ModRM >=0xc0 )?v30MZ:v30MZm; nec_TotalClock+=( ModRM >=0xc0 )?v30MZ:v30MZm; }
-#define CLKR(v30MZo,v30MZe,vall) { if (ModRM >=0xc0) { nec_ICount-=vall; nec_TotalClock+=vall;} else {nec_ICount-=(I.ip&1)?v30MZo:v30MZe; nec_TotalClock+=(I.ip&1)?v30MZo:v30MZe; } }
+#define CLK(all) nec_ICount-=all
+#define CLKW(v30MZo,v30MZe) { nec_ICount-=(I.ip&1)?v30MZo:v30MZe; }
+#define CLKM(v30MZm,v30MZ) { nec_ICount-=( ModRM >=0xc0 )?v30MZ:v30MZm; }
+#define CLKR(v30MZo,v30MZe,vall) { if (ModRM >=0xc0) nec_ICount-=vall; else nec_ICount-=(I.ip&1)?v30MZo:v30MZe; }
 #endif
 
 #define CompressFlags() (uint16_t)(CF | (PF << 2) | (AF << 4) | (ZF << 6) \
@@ -182,6 +182,7 @@ typedef enum { AL,AH,CL,CH,DL,DH,BL,BH,SPL,SPH,BPL,BPH,IXL,IXH,IYL,IYH } BREGS;
 	{										\
 		I.ip = (uint16_t)(I.ip+tmp);			\
 		nec_ICount-=3;						\
+		nec_clock_correction-=3;				\
 		return;								\
 	}
 

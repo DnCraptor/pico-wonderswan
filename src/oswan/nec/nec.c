@@ -72,6 +72,15 @@ typedef struct
 int nec_ICount;
 #if 1
 uint32_t nec_TotalClock = 0;
+/* Most V30MZ cycles historically contributed twice to nec_TotalClock: once
+ * in CLK* and once in nec_execute().  Keep that externally visible clock
+ * scale, but account it once per instruction instead of writing the global
+ * clock from every CLK* macro.  A few fast paths consume cycles outside
+ * CLK*; nec_clock_correction keeps their historical single-accounting. */
+static int nec_clock_correction;
+static int nec_execute_start_icount;
+static uint32_t nec_execute_base_clock;
+static int nec_execute_active;
 #endif
 
 static nec_Regs I;
@@ -526,8 +535,11 @@ OP( 0x8e, i_mov_sregw ) { UINT16 src; GetModRM; src = GetRMWord(ModRM); CLKM(3,2
 OP( 0x8f, i_popw ) { UINT16 tmp; GetModRM; POP(tmp); PutRMWord(ModRM,tmp); CLKM(3,1); }
 OP( 0x90, i_nop  ) { CLK(1);
 	/* Cycle skip for idle loops (0: NOP  1:  JMP 0) */
-	if (no_interrupt==0 && nec_ICount>0 && (PEEKOP((I.sregs[CS]<<4)+I.ip))==0xeb && (PEEK((I.sregs[CS]<<4)+I.ip+1))==0xfd)
+	if (no_interrupt==0 && nec_ICount>0 && (PEEKOP((I.sregs[CS]<<4)+I.ip))==0xeb && (PEEK((I.sregs[CS]<<4)+I.ip+1))==0xfd) {
+		const int before_skip = nec_ICount;
 		nec_ICount%=15;
+		nec_clock_correction -= before_skip - nec_ICount;
+	}
 }
 OP( 0x91, i_xchg_axcx ) { XchgAWReg(CW); CLK(3); }
 OP( 0x92, i_xchg_axdx ) { XchgAWReg(DW); CLK(3); }
@@ -736,7 +748,11 @@ OP( 0xe8, i_call_d16 ) { UINT32 tmp; FETCHWORD(tmp); PUSH(I.ip); I.ip = (uint16_
 OP( 0xe9, i_jmp_d16  ) { UINT32 tmp; FETCHWORD(tmp); I.ip = (uint16_t)(I.ip+(INT16)tmp); CLK(4); }
 OP( 0xea, i_jmp_far  ) { UINT32 tmp,tmp1; FETCHWORD(tmp); FETCHWORD(tmp1); I.sregs[CS] = (uint16_t)tmp1; 	I.ip = (uint16_t)tmp; CLK(7);  }
 OP( 0xeb, i_jmp_d8   ) { int tmp = (int)((INT8)FETCH); CLK(4);
-	if (tmp==-2 && no_interrupt==0 && nec_ICount>0) nec_ICount%=12; /* cycle skip */
+	if (tmp==-2 && no_interrupt==0 && nec_ICount>0) {
+		const int before_skip = nec_ICount;
+		nec_ICount%=12; /* cycle skip */
+		nec_clock_correction -= before_skip - nec_ICount;
+	}
 	I.ip = (uint16_t)(I.ip+tmp);
 }
 OP( 0xec, i_inaldx   ) { I.regs.b[AL] = read_port(I.regs.w[DW]); CLK(6);}
@@ -807,7 +823,7 @@ OP( 0xf3, i_repe     ) { UINT32 next = FETCHOP; UINT16 c = I.regs.w[CW];
     }
 	seg_prefix=FALSE;
 }
-OP( 0xf4, i_hlt ) { nec_ICount=0; }
+OP( 0xf4, i_hlt ) { nec_clock_correction -= nec_ICount; nec_ICount=0; }
 
 
 
@@ -928,23 +944,44 @@ void nec_set_reg(int regnum, unsigned val)
 
 int __not_in_flash_func(nec_execute)(int cycles)
 {
-	
 	nec_ICount=cycles;
+	nec_execute_start_icount = cycles;
+	nec_execute_base_clock = nec_TotalClock;
+	nec_clock_correction = 0;
+	nec_execute_active = 1;
 //	cpu_type=V30;
 
 	while(nec_ICount>0) {
 		const int count_before = nec_ICount;
+		const int correction_before = nec_clock_correction;
 
 		nec_instruction[FETCHOP]();
-		nec_TotalClock += (uint32_t)(count_before - nec_ICount);
+
+		/* Normal CLK* cycles used to be counted twice.  Cycles consumed by
+		 * branch/idle/HLT fast paths were counted only by this outer path;
+		 * their negative correction preserves that exact clock scale. */
+		nec_TotalClock += (uint32_t)(2 * (count_before - nec_ICount)
+		                                  + (nec_clock_correction - correction_before));
+		nec_execute_base_clock = nec_TotalClock;
+		nec_execute_start_icount = nec_ICount;
+		nec_clock_correction = 0;
     }
 
+	nec_execute_active = 0;
 	return cycles - nec_ICount;
 }
 
 #if 1
-uint32_t nec_get_clock(void)
+uint32_t __not_in_flash_func(nec_get_clock)(void)
 {
+	if (nec_execute_active) {
+		/* While an instruction is still running, the old CLK* macros had
+		 * contributed their first copy of elapsed cycles; the outer second
+		 * copy was not added until the instruction returned. */
+		return nec_execute_base_clock
+		     + (uint32_t)((nec_execute_start_icount - nec_ICount)
+		                  + nec_clock_correction);
+	}
 	return nec_TotalClock;
 }
 #endif
