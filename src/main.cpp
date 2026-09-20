@@ -22,6 +22,7 @@
 
 extern "C" {
 #include "ws.h"
+#include "ws_audio.h"
 #include "io.h"
 #include "gpu.h"
 }
@@ -835,10 +836,21 @@ bool toggle_color() {
 #endif
 int palette_index = 0;
 bool show_fps = false;
+uint8_t audio_volume = 4;
+
+static bool apply_audio_volume() {
+    ws_audio_set_enabled(audio_volume != 0);
+    if (audio_volume != 0) {
+        static const uint8_t attenuation[] = { 0, 3, 2, 1, 0 };
+        i2s_volume(&i2s_config, attenuation[audio_volume]);
+    }
+    return false;
+}
 const MenuItem menu_items[] = {
         { "Swap AB <> BA: %s", ARRAY, &swap_ab, nullptr, 1, { "NO ", "YES" }},
         { "Screen rotation: %s", ARRAY, &rotation_mode, nullptr, 3, { "Auto", "Landscape", "Portrait ", "Manual   " }},
         { "FPS overlay: %s", ARRAY, &show_fps, nullptr, 1, { "OFF", "ON " }},
+        { "Volume: %s", ARRAY, &audio_volume, &apply_audio_volume, 4, { "Mute", "12% ", "25% ", "50% ", "100%" }},
         {},
         //{ "Player 1: %s",        ARRAY, &player_1_input, 2, { "Keyboard ", "Gamepad 1", "Gamepad 2" }},
         //{ "Player 2: %s",        ARRAY, &player_2_input, 2, { "Keyboard ", "Gamepad 1", "Gamepad 2" }},
@@ -913,12 +925,17 @@ static void menu(bool game_loaded) {
                     case ARRAY:
                         if (item->max_value != 0) {
                             auto *value = (uint8_t *) item->value;
+                            bool changed = false;
                             if (gamepad1_bits.right && *value < item->max_value) {
                                 (*value)++;
+                                changed = true;
                             }
                             if (gamepad1_bits.left && *value > 0) {
                                 (*value)--;
+                                changed = true;
                             }
+                            if (changed && item->value == &audio_volume)
+                                apply_audio_volume();
                         }
                         break;
                     case RETURN:
@@ -997,6 +1014,7 @@ void __time_critical_func(render_core)() {
     i2s_config.dma_trans_count = 256;
     i2s_volume(&i2s_config, 0);
     i2s_init(&i2s_config);
+    apply_audio_volume();
 
     ps2kbd.init_gpio();
     nespad_begin(clock_get_hz(clk_sys) / 1000, NES_GPIO_CLK, NES_GPIO_DATA, NES_GPIO_LAT);

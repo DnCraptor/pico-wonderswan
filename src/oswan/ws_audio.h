@@ -10,6 +10,7 @@ void ws_audio_init(void);
 void ws_audio_reset(void);
 void ws_audio_process(uint32 cycles);
 void ws_audio_sync(void);
+void ws_audio_set_enabled(int enabled);
 uint8 ws_audio_hyper_port_read(uint32 port);
 void ws_audio_hyper_port_write(uint32 port, uint8 value);
 uint8 ws_audio_dma_port_read(uint32 port);

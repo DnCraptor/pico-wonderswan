@@ -27,6 +27,7 @@ static int32 sweep_divider;
 static uint8 sweep_counter;
 static uint16 sample_counter;
 static uint32 audio_cpu_clock;
+static bool audio_enabled = true;
 static int32 dc_prev_in[2];
 static int32 dc_prev_out[2];
 static int16 pcm[WS_AUDIO_BLOCK * 2];
@@ -339,12 +340,26 @@ void __not_in_flash_func(ws_audio_process)(uint32 cycles) {
 }
 
 void __not_in_flash_func(ws_audio_sync)(void) {
+    /* This function is on the scanline hot path.  In mute mode return before
+     * even reading the emulated CPU clock: no channel stepping, sample
+     * generation, filters, sound DMA or host PCM work is performed. */
+    if (!audio_enabled) return;
+
     const uint32 now = nec_get_clock();
     const uint32 elapsed = now - audio_cpu_clock;
     if (elapsed) {
         ws_audio_process(elapsed);
         audio_cpu_clock = now;
     }
+}
+
+void ws_audio_set_enabled(int enabled) {
+    const bool new_enabled = enabled != 0;
+    if (audio_enabled == new_enabled) return;
+    audio_enabled = new_enabled;
+    audio_cpu_clock = nec_get_clock();
+    if (!audio_enabled)
+        pcm_frames = 0;
 }
 
 uint8 ws_audio_hyper_port_read(uint32 port) {
