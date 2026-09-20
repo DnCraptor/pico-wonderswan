@@ -1095,11 +1095,11 @@ int main() {
         uint64_t fps_started = time_us_64();
         uint32_t fps_frames = 0;
         graphics_set_fps_overlay(show_fps, 0);
-#ifdef VGA
+#if defined(VGA) || defined(HDMI)
         // The WonderSwan video timing is 3.072 MHz / (256 cycles * 159 lines),
         // i.e. one emulated frame every 13250 us (~75.47 Hz). VGA is normally
         // slower, so use a third buffer and let VGA latch the newest completed
-        // frame instead of throttling emulation to the VGA refresh rate.
+        // frame instead of throttling emulation to the physical video refresh.
         uint64_t next_ws_frame = time_us_64() + 13250;
 #endif
         while (!reboot) {
@@ -1183,10 +1183,13 @@ int main() {
             while(!ws_executeLine(buffer, 1)) ;
             uint8_t *present_buffer = buffer;
             if (portrait) {
-#ifdef VGA
+#if defined(VGA)
                 // SCREEN2/3 are presentation buffers. The pending (not active)
-                // buffer may be replaced before VGA latches it at frame boundary.
+                // buffer may be replaced before scanout latches it at frame boundary.
                 present_buffer = vga_is_buffer_active((uint8_t*)SCREEN2)
+                               ? (uint8_t*)SCREEN3 : (uint8_t*)SCREEN2;
+#elif defined(HDMI)
+                present_buffer = hdmi_is_buffer_active((uint8_t*)SCREEN2)
                                ? (uint8_t*)SCREEN3 : (uint8_t*)SCREEN2;
 #else
                 present_buffer = (frame & 1) ? (uint8_t*)SCREEN2 : (uint8_t*)SCREEN3;
@@ -1207,10 +1210,10 @@ int main() {
                 fps_started = fps_now;
                 fps_frames = 0;
             }
-#ifdef VGA
-            // Never render into either the buffer currently scanned by VGA or
-            // the newest completed frame waiting for the next VGA frame boundary.
-            // If emulation outruns VGA, replacing the pending frame is safe: the
+#if defined(VGA) || defined(HDMI)
+            // Never render into either the buffer currently scanned out or
+            // the newest completed frame waiting for the next physical frame boundary.
+            // If emulation outruns scanout, replacing the pending frame is safe: the
             // dropped frame was never scanned out.
             if (!portrait) {
                 uint8_t* const candidates[] = {
@@ -1219,7 +1222,12 @@ int main() {
                 do {
                     buffer = NULL;
                     for (unsigned i = 0; i < 3; ++i) {
-                        if (!vga_is_buffer_in_use(candidates[i])) {
+#ifdef VGA
+                        const bool in_use = vga_is_buffer_in_use(candidates[i]);
+#else
+                        const bool in_use = hdmi_is_buffer_in_use(candidates[i]);
+#endif
+                        if (!in_use) {
                             buffer = candidates[i];
                             break;
                         }

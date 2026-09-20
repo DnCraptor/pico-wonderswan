@@ -28,10 +28,15 @@ static uint32_t palette[256];
 #define SCREEN_HEIGHT (240)
 //графический буфер
 static uint8_t* __scratch_y("hdmi_ptr_1") graphics_buffer = NULL;
+static volatile uint8_t* displayed_graphics_buffer = NULL;
 static int graphics_buffer_width = 0;
 static int graphics_buffer_height = 0;
 static int graphics_buffer_shift_x = 0;
 static int graphics_buffer_shift_y = 0;
+static int displayed_graphics_buffer_width = 0;
+static int displayed_graphics_buffer_height = 0;
+static int displayed_graphics_buffer_shift_x = 0;
+static int displayed_graphics_buffer_shift_y = 0;
 
 //текстовый буфер
 uint8_t* text_buffer = NULL;
@@ -185,6 +190,17 @@ static void __scratch_y("hdmi_driver") dma_handler_HDMI() {
 
     line = line >= 524 ? 0 : line + 1;
 
+    // Latch the newest completed emulator frame only at an HDMI frame
+    // boundary.  The producer may replace graphics_buffer at any time; the
+    // scanout side keeps using displayed_graphics_buffer for the whole frame.
+    if (line == 0) {
+        displayed_graphics_buffer = graphics_buffer;
+        displayed_graphics_buffer_width = graphics_buffer_width;
+        displayed_graphics_buffer_height = graphics_buffer_height;
+        displayed_graphics_buffer_shift_x = graphics_buffer_shift_x;
+        displayed_graphics_buffer_shift_y = graphics_buffer_shift_y;
+    }
+
     // Each TMDS palette entry is 64 bits, but the RP2350 updates it with
     // two 32-bit stores. Restore UI colours only in vertical blanking, when
     // the converter cannot be reading palette slots 200..215.
@@ -200,31 +216,31 @@ static void __scratch_y("hdmi_driver") dma_handler_HDMI() {
 
     uint8_t* activ_buf = (uint8_t *) dma_lines[inx_buf_dma & 1];
 
-    if (graphics_buffer && line < 480) {
+    if (displayed_graphics_buffer && line < 480) {
         //область изображения
-        uint8_t* input_buffer = &graphics_buffer[(line / 2) * graphics_buffer_width];
+        const volatile uint8_t* input_buffer = &displayed_graphics_buffer[(line / 2) * displayed_graphics_buffer_width];
         uint8_t* output_buffer = activ_buf + 72; //для выравнивания синхры;
         int y = line / 2;
         switch (graphics_mode) {
             case GRAPHICSMODE_DEFAULT:
             case VGA_320x240x256: {
                 //заполняем пространство сверху и снизу графического буфера
-                if (y < graphics_buffer_shift_y || y >= (graphics_buffer_shift_y + graphics_buffer_height)) {
+                if (y < displayed_graphics_buffer_shift_y || y >= (displayed_graphics_buffer_shift_y + displayed_graphics_buffer_height)) {
                     memset(output_buffer, 255,SCREEN_WIDTH);
                     break;
                 }
 
                 uint8_t* activ_buf_end = output_buffer + SCREEN_WIDTH;
                 //рисуем пространство слева от буфера
-                memset(output_buffer, 255, graphics_buffer_shift_x);
-                output_buffer += graphics_buffer_shift_x;
+                memset(output_buffer, 255, displayed_graphics_buffer_shift_x);
+                output_buffer += displayed_graphics_buffer_shift_x;
 
                 //рисуем сам видеобуфер+пространство справа
-                input_buffer = &graphics_buffer[(y - graphics_buffer_shift_y) * graphics_buffer_width];
+                input_buffer = &displayed_graphics_buffer[(y - displayed_graphics_buffer_shift_y) * displayed_graphics_buffer_width];
 
-                const uint8_t* input_buffer_end = input_buffer + graphics_buffer_width;
+                const volatile uint8_t* input_buffer_end = input_buffer + displayed_graphics_buffer_width;
 
-                if (graphics_buffer_shift_x < 0) input_buffer -= graphics_buffer_shift_x;
+                if (displayed_graphics_buffer_shift_x < 0) input_buffer -= displayed_graphics_buffer_shift_x;
 
                 while (activ_buf_end > output_buffer) {
                     if (input_buffer < input_buffer_end) {
@@ -262,10 +278,10 @@ static void __scratch_y("hdmi_driver") dma_handler_HDMI() {
 
         /* FPS lives in the left border, never in the WS image. */
         if (graphics_mode == GRAPHICSMODE_DEFAULT && graphics_fps_overlay_enabled &&
-            y >= graphics_buffer_shift_y + 2 && y < graphics_buffer_shift_y + 10 &&
-            graphics_buffer_shift_x >= 48) {
+            y >= displayed_graphics_buffer_shift_y + 2 && y < displayed_graphics_buffer_shift_y + 10 &&
+            displayed_graphics_buffer_shift_x >= 48) {
             uint8_t *dst = activ_buf + 72 + 2;
-            const unsigned glyph_row = (unsigned)(y - graphics_buffer_shift_y - 2);
+            const unsigned glyph_row = (unsigned)(y - displayed_graphics_buffer_shift_y - 2);
             for (const char *p = graphics_fps_overlay_text; *p; ++p) {
                 uint8_t bits = font_6x8[(uint8_t)*p * 8u + glyph_row];
                 for (unsigned bit = 0; bit < 6; ++bit) {
@@ -594,6 +610,14 @@ void graphics_set_palette(uint8_t i, uint32_t color888) {
 
     hdmi_set_palette_entry(i, color888);
 };
+
+bool hdmi_is_buffer_active(const uint8_t* buffer) {
+    return displayed_graphics_buffer == buffer;
+}
+
+bool hdmi_is_buffer_in_use(const uint8_t* buffer) {
+    return displayed_graphics_buffer == buffer || graphics_buffer == buffer;
+}
 
 void graphics_set_buffer(uint8_t* buffer, uint16_t width, uint16_t height) {
     graphics_buffer = buffer;

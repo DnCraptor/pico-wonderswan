@@ -37,6 +37,9 @@ static void graphics_set_flashmode(bool flash_line, bool flash_frame) {
     // dummy
 }
 
+/* Triple-buffer ownership: pending producer frame vs frame-boundary-latched scanout. */
+bool hdmi_is_buffer_active(const uint8_t* buffer);
+bool hdmi_is_buffer_in_use(const uint8_t* buffer);
 
 #ifdef __cplusplus
 }
