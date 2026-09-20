@@ -918,19 +918,36 @@ static void palette_preview_rgb(uint8_t *buffer, int x, int y, uint32_t rgb, uin
 
 static uint8_t palette_preview_contrast(unsigned shade) {
     const uint32_t bg = ws_shades[shade] & 0x00ffffffu;
-    const uint32_t c0 = ws_shades[0] & 0x00ffffffu;
-    const uint32_t c15 = ws_shades[15] & 0x00ffffffu;
     const int br = (bg >> 16) & 0xff, bgc = (bg >> 8) & 0xff, bb = bg & 0xff;
-    const int r0 = (c0 >> 16) & 0xff, g0 = (c0 >> 8) & 0xff, b0 = c0 & 0xff;
-    const int r15 = (c15 >> 16) & 0xff, g15 = (c15 >> 8) & 0xff, b15 = c15 & 0xff;
-    const unsigned d0 = (unsigned)((br-r0)*(br-r0) + (bgc-g0)*(bgc-g0) + (bb-b0)*(bb-b0));
-    const unsigned d15 = (unsigned)((br-r15)*(br-r15) + (bgc-g15)*(bgc-g15) + (bb-b15)*(bb-b15));
-    return d0 >= d15 ? 0 : 15;
+    uint8_t best = 0;
+    unsigned best_distance = 0;
+
+    /* Pick the most distant of the sixteen current colours. This keeps the
+       text readable even after colour 0 or 15 has itself been edited. */
+    for (unsigned i = 0; i < 16; ++i) {
+        const uint32_t fg = ws_shades[i] & 0x00ffffffu;
+        const int fr = (fg >> 16) & 0xff, fgc = (fg >> 8) & 0xff, fb = fg & 0xff;
+        const unsigned distance = (unsigned)((br-fr)*(br-fr) +
+                                             (bgc-fgc)*(bgc-fgc) +
+                                             (bb-fb)*(bb-fb));
+        if (distance > best_distance) {
+            best_distance = distance;
+            best = (uint8_t)i;
+        }
+    }
+    return best;
 }
 
-static void show_current_palettes(void) {
-    uint8_t *buffer = (uint8_t *)SCREEN3;
+static void palette_preview_apply_palette(void) {
+    /* Keep the whole preview palette coherent.  In particular, do this on
+       every edit step rather than only when leaving the editor: the preview
+       framebuffer contains palette indices, so changing ws_shades[] alone
+       cannot change the visible swatch. */
+    for (unsigned i = 0; i < 16; ++i)
+        graphics_set_palette((uint8_t)i, ws_shades[i]);
+}
 
+static void palette_preview_draw(uint8_t *buffer, unsigned selected, int edit_channel) {
     /* Mono WS framebuffer colours are the sixteen current shade indices. */
     for (unsigned shade = 0; shade < 16; ++shade) {
         const int x0 = (int)(shade & 3u) * 56;
@@ -939,28 +956,184 @@ static void show_current_palettes(void) {
             memset(buffer + y * 224 + x0, (int)shade, 56);
     }
 
-    graphics_set_buffer(buffer, 224, 144);
-    graphics_set_mode(GRAPHICSMODE_DEFAULT);
-    ws_gpu_refresh_palette();
-
-    /* Each swatch contains its shade index and the actual RRGGBB value. */
+    /* Each swatch contains its shade index and the editable RRGGBB value. */
     for (unsigned shade = 0; shade < 16; ++shade) {
         const int x0 = (int)(shade & 3u) * 56;
         const int y0 = (int)(shade >> 2) * 36;
         const uint8_t text = palette_preview_contrast(shade);
+        const uint32_t rgb = ws_shades[shade] & 0x00ffffffu;
         palette_preview_hex_digit(buffer, x0 + 13, y0 + 15, shade, text);
-        palette_preview_rgb(buffer, x0 + 21, y0 + 15, ws_shades[shade] & 0x00ffffffu, text);
+        palette_preview_rgb(buffer, x0 + 21, y0 + 15, rgb, text);
+
+        /* A border is the focus indicator in browse mode. */
+        if (shade == selected) {
+            for (int x = x0 + 1; x < x0 + 55; ++x) {
+                buffer[(y0 + 1) * 224 + x] = text;
+                buffer[(y0 + 34) * 224 + x] = text;
+            }
+            for (int y = y0 + 1; y < y0 + 35; ++y) {
+                buffer[y * 224 + x0 + 1] = text;
+                buffer[y * 224 + x0 + 54] = text;
+            }
+
+            /* Editing works at RGB-channel level, not at individual hex
+               nibbles.  Underline the selected byte (RR, GG or BB). */
+            if (edit_channel >= 0) {
+                const int dx = x0 + 21 + edit_channel * 8;
+                for (int x = dx; x < dx + 7; ++x)
+                    buffer[(y0 + 21) * 224 + x] = text;
+            }
+        }
+    }
+}
+
+static bool palette_button_pressed(bool level, bool *armed, uint64_t *released_since) {
+    const uint64_t now = time_us_64();
+    if (level) {
+        *released_since = 0;
+        if (*armed) {
+            *armed = false;
+            return true;
+        }
+        return false;
     }
 
-    /* Display-only page. START, B or SELECT returns to the normal menu. */
-    while (gamepad1_bits.start || gamepad1_bits.b || gamepad1_bits.select)
-        sleep_ms(20);
-    while (!(gamepad1_bits.start || gamepad1_bits.b || gamepad1_bits.select))
-        sleep_ms(20);
-    while (gamepad1_bits.start || gamepad1_bits.b || gamepad1_bits.select)
-        sleep_ms(20);
+    /* Do not re-arm on a short contact bounce.  The button must have been
+       continuously released for 50 ms before another press can be accepted. */
+    if (*released_since == 0)
+        *released_since = now;
+    else if (now - *released_since >= 50000)
+        *armed = true;
+    return false;
+}
 
-    graphics_set_mode(TEXTMODE_DEFAULT);
+typedef struct {
+    bool active;
+    uint64_t next_repeat;
+} palette_repeat_t;
+
+static bool palette_repeat(bool level, palette_repeat_t *state) {
+    const uint64_t now = time_us_64();
+    if (!level) {
+        state->active = false;
+        state->next_repeat = 0;
+        return false;
+    }
+    if (!state->active) {
+        state->active = true;
+        state->next_repeat = now + 300000; /* initial key-repeat delay */
+        return true;
+    }
+    if (now >= state->next_repeat) {
+        state->next_repeat = now + 80000;  /* controlled repeat rate */
+        return true;
+    }
+    return false;
+}
+
+static bool show_current_palettes(void) {
+    uint8_t *buffer = (uint8_t *)SCREEN3;
+    unsigned selected = 0;
+    int edit_channel = -1;
+
+    graphics_set_buffer(buffer, 224, 144);
+    graphics_set_mode(GRAPHICSMODE_DEFAULT);
+    palette_preview_apply_palette();
+    palette_preview_draw(buffer, selected, edit_channel);
+
+    /* Editor-local logical controls.  Keyboard works without a gamepad:
+       arrows navigate, Enter/X = accept/edit, Esc/Z = back/close.  Keep
+       physical START as an additional close action. */
+    bool accept_armed = false, back_armed = false, start_armed = false;
+    uint64_t accept_released = 0, back_released = 0, start_released = 0;
+    palette_repeat_t rep_left = {}, rep_right = {}, rep_up = {}, rep_down = {};
+
+    for (;;) {
+        const bool left_level  = keyboard_bits.left  || (nespad_state & DPAD_LEFT);
+        const bool right_level = keyboard_bits.right || (nespad_state & DPAD_RIGHT);
+        const bool up_level    = keyboard_bits.up    || (nespad_state & DPAD_UP);
+        const bool down_level  = keyboard_bits.down  || (nespad_state & DPAD_DOWN);
+        const bool accept_level = keyboard_bits.a || keyboard_bits.start || (nespad_state & DPAD_A);
+        const bool back_level = keyboard_bits.b || keyboard_bits.select || (nespad_state & DPAD_B);
+        const bool start_level = (nespad_state & DPAD_START) != 0;
+
+        const bool accept = palette_button_pressed(accept_level, &accept_armed, &accept_released);
+        const bool back = palette_button_pressed(back_level, &back_armed, &back_released);
+        const bool close = palette_button_pressed(start_level, &start_armed, &start_released);
+        const bool left = palette_repeat(left_level, &rep_left);
+        const bool right = palette_repeat(right_level, &rep_right);
+        const bool up = palette_repeat(up_level, &rep_up);
+        const bool down = palette_repeat(down_level, &rep_down);
+
+        bool redraw = false;
+        bool palette_changed = false;
+
+        if (edit_channel < 0) {
+            if (left) {
+                selected = (selected & ~3u) | ((selected - 1u) & 3u);
+                redraw = true;
+            } else if (right) {
+                selected = (selected & ~3u) | ((selected + 1u) & 3u);
+                redraw = true;
+            } else if (up) {
+                selected = (selected - 4u) & 15u;
+                redraw = true;
+            } else if (down) {
+                selected = (selected + 4u) & 15u;
+                redraw = true;
+            } else if (accept) {
+                edit_channel = 0;
+                redraw = true;
+            } else if (back || close) {
+                palette_preview_apply_palette();
+                graphics_set_mode(GRAPHICSMODE_DEFAULT);
+                return true;
+            }
+        } else {
+            /* Inside one swatch, horizontal movement changes the
+               field (R/G/B); vertical movement changes its value. */
+            if (left) {
+                edit_channel = (edit_channel + 2) % 3;
+                redraw = true;
+            } else if (right) {
+                edit_channel = (edit_channel + 1) % 3;
+                redraw = true;
+            } else if (up || down) {
+                const unsigned shift = (unsigned)(2 - edit_channel) * 8u;
+                uint32_t rgb = ws_shades[selected] & 0x00ffffffu;
+                unsigned value = (rgb >> shift) & 0xffu;
+                if (up)
+                    value = value == 255u ? 255u : value + 1u;
+                else
+                    value = value == 0u ? 0u : value - 1u;
+                rgb = (rgb & ~(0xffu << shift)) | (value << shift);
+                ws_shades[selected] = rgb;
+                palette_changed = true;
+                redraw = true;
+            } else if (back || accept) {
+                /* Both Enter/A and Esc/B finish editing, but because they are
+                   edge-triggered a held/bouncing contact cannot immediately
+                   toggle the mode a second time. */
+                edit_channel = -1;
+                redraw = true;
+            } else if (close) {
+                palette_preview_apply_palette();
+                graphics_set_mode(GRAPHICSMODE_DEFAULT);
+                return true;
+            }
+        }
+
+        if (palette_changed) {
+            /* Push the changed RGB entry before drawing the indexed preview.
+               The next scan of this buffer therefore sees the new colour on
+               the very same edit step. */
+            palette_preview_apply_palette();
+        }
+        if (redraw)
+            palette_preview_draw(buffer, selected, edit_channel);
+
+        sleep_ms(10);
+    }
 }
 
 const MenuItem menu_items[] = {
@@ -1067,8 +1240,10 @@ static void menu(bool game_loaded) {
                         break;
 
                     case SHOW_PALETTES:
-                        if (gamepad1_bits.start && mono_ws_rom_loaded(game_loaded))
-                            show_current_palettes();
+                        if (gamepad1_bits.start && mono_ws_rom_loaded(game_loaded)) {
+                            if (show_current_palettes())
+                                return;
+                        }
                         break;
 
                     case ROM_SELECT:
