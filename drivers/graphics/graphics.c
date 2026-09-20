@@ -1,5 +1,21 @@
 #include "graphics.h"
 #include <string.h>
+#include <stdio.h>
+
+volatile bool graphics_fps_overlay_enabled = false;
+char graphics_fps_overlay_text[8] = "--.-";
+
+void graphics_set_fps_overlay(const bool enabled, const uint16_t fps_x10) {
+    /* Disable while replacing the string: core 1 may be scanning it. */
+    graphics_fps_overlay_enabled = false;
+    if (enabled) {
+        const unsigned fps = fps_x10 / 10u;
+        const unsigned tenth = fps_x10 % 10u;
+        snprintf(graphics_fps_overlay_text, sizeof(graphics_fps_overlay_text),
+                 "%u.%u", fps, tenth);
+        graphics_fps_overlay_enabled = true;
+    }
+}
 
 void draw_text(const char string[TEXTMODE_COLS + 1], uint32_t x, uint32_t y, uint8_t color, uint8_t bgcolor) {
     uint8_t* t_buf = text_buffer + TEXTMODE_COLS * 2 * y + 2 * x;

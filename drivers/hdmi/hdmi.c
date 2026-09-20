@@ -260,6 +260,21 @@ static void __scratch_y("hdmi_driver") dma_handler_HDMI() {
             }
         }
 
+        /* FPS lives in the left border, never in the WS image. */
+        if (graphics_mode == GRAPHICSMODE_DEFAULT && graphics_fps_overlay_enabled &&
+            y >= graphics_buffer_shift_y + 2 && y < graphics_buffer_shift_y + 10 &&
+            graphics_buffer_shift_x >= 48) {
+            uint8_t *dst = activ_buf + 72 + 2;
+            const unsigned glyph_row = (unsigned)(y - graphics_buffer_shift_y - 2);
+            for (const char *p = graphics_fps_overlay_text; *p; ++p) {
+                uint8_t bits = font_6x8[(uint8_t)*p * 8u + glyph_row];
+                for (unsigned bit = 0; bit < 6; ++bit) {
+                    if (bits & 1u) dst[bit] = 215; /* reserved UI white */
+                    bits >>= 1;
+                }
+                dst += 6;
+            }
+        }
 
         // memset(activ_buf,2,320);//test
 

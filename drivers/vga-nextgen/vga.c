@@ -318,6 +318,21 @@ void __time_critical_func() dma_handler_VGA() {
         default:
             break;
     }
+
+    /* FPS lives in the left border, never in the WS image. */
+    if (graphics_mode == GRAPHICSMODE_DEFAULT && graphics_fps_overlay_enabled &&
+        y >= 2 && y < 10 && graphics_buffer_shift_x >= 48) {
+        uint16_t *dst = (uint16_t *)(*output_buffer) + shift_picture / 2 + 2;
+        const unsigned glyph_row = (unsigned)y - 2u;
+        for (const char *p = graphics_fps_overlay_text; *p; ++p) {
+            uint8_t bits = font_6x8[(uint8_t)*p * 8u + glyph_row];
+            for (unsigned bit = 0; bit < 6; ++bit) {
+                if (bits & 1u) dst[bit] = txt_palette[15];
+                bits >>= 1;
+            }
+            dst += 6;
+        }
+    }
     dma_channel_set_read_addr(dma_chan_ctrl, output_buffer, false);
 }
 

@@ -829,9 +829,11 @@ bool toggle_color() {
 }
 #endif
 int palette_index = 0;
+bool show_fps = false;
 const MenuItem menu_items[] = {
         { "Swap AB <> BA: %s", ARRAY, &swap_ab, nullptr, 1, { "NO ", "YES" }},
         { "Screen rotation: %s", ARRAY, &rotation_mode, nullptr, 3, { "Auto", "Landscape", "Portrait ", "Manual   " }},
+        { "FPS overlay: %s", ARRAY, &show_fps, nullptr, 1, { "OFF", "ON " }},
         {},
         //{ "Player 1: %s",        ARRAY, &player_1_input, 2, { "Keyboard ", "Gamepad 1", "Gamepad 2" }},
         //{ "Player 2: %s",        ARRAY, &player_2_input, 2, { "Keyboard ", "Gamepad 1", "Gamepad 2" }},
@@ -1090,6 +1092,9 @@ int main() {
         bool portrait = portrait_enabled();
         ws_io_setControlsFlipped(portrait);
         uint8_t* buffer = portrait ? (uint8_t*)SCREEN1 : (uint8_t*)SCREEN2;
+        uint64_t fps_started = time_us_64();
+        uint32_t fps_frames = 0;
+        graphics_set_fps_overlay(show_fps, 0);
 #ifdef VGA
         // The WonderSwan video timing is 3.072 MHz / (256 cycles * 159 lines),
         // i.e. one emulated frame every 13250 us (~75.47 Hz). VGA is normally
@@ -1107,6 +1112,10 @@ int main() {
 
             if (gamepad1_bits.start && gamepad1_bits.select) {
                 menu();
+                /* Do not count time spent in the menu as an emulator slowdown. */
+                fps_started = time_us_64();
+                fps_frames = 0;
+                graphics_set_fps_overlay(show_fps, 0);
             }
 
             // WonderSwan has no Select button. NES Select / keyboard
@@ -1188,6 +1197,16 @@ int main() {
                 graphics_set_buffer(present_buffer, 224, 144);
             }
             frame++;
+            ++fps_frames;
+            const uint64_t fps_now = time_us_64();
+            const uint64_t fps_elapsed = fps_now - fps_started;
+            if (fps_elapsed >= 1000000u) {
+                const uint16_t fps_x10 = (uint16_t)(((uint64_t)fps_frames * 10000000u +
+                                                     fps_elapsed / 2u) / fps_elapsed);
+                graphics_set_fps_overlay(show_fps, fps_x10);
+                fps_started = fps_now;
+                fps_frames = 0;
+            }
 #ifdef VGA
             // Never render into either the buffer currently scanned by VGA or
             // the newest completed frame waiting for the next VGA frame boundary.
