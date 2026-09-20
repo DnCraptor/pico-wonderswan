@@ -65,4 +65,20 @@ unsigned nec_get_reg(int regnum);
 void nec_reset (void *param);
 void nec_int(uint32_t wektor);
 
+typedef struct {
+    uint16_t regs[8];
+    uint16_t sregs[4];
+    uint16_t ip;
+    int32_t sign_val;
+    uint32_t aux_val, over_val, zero_val, carry_val, parity_val;
+    uint8_t tf, iff, df, mf;
+    uint32_t int_vector, pending_irq, nmi_state, irq_state;
+    uint32_t cpu_type, prefix_base, total_clock;
+    int32_t icount, no_interrupt;
+    uint8_t seg_prefix;
+} nec_snapshot_t;
+
+void nec_snapshot_get(nec_snapshot_t *state);
+void nec_snapshot_set(const nec_snapshot_t *state);
+
 #endif

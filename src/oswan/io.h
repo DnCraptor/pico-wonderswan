@@ -32,4 +32,8 @@ void ws_io_flipControls(void);
 void ws_io_setControlsFlipped(int flipped);
 void ws_io_done(void);
 
+typedef struct { uint8 io_ram[0x100]; uint8 internal_eeprom[1024]; int32 rtc_read_count; uint8 controls_flipped; } ws_io_snapshot_t;
+void ws_io_snapshot_get(ws_io_snapshot_t *state);
+void ws_io_snapshot_set(const ws_io_snapshot_t *state);
+
 #endif

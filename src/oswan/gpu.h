@@ -42,5 +42,17 @@ void ws_gpu_forceColorSystem(void);
 void ws_gpu_forceMonoSystem(void);
 void ws_gpu_clearCache(void);
 
+typedef struct {
+    uint8 scanline, operating_in_color, video_mode, sprite_count_cache[2], sprite_table_active;
+    uint8 reserved[2];
+    uint32 sprite_table[2][0x80];
+    int16 palette[16 * 4];
+    int8 palette_colors[8];
+    int16 color_palette[16 * 16];
+    int32 force_color, force_mono;
+} ws_gpu_snapshot_t;
+void ws_gpu_snapshot_get(ws_gpu_snapshot_t *state);
+void ws_gpu_snapshot_set(const ws_gpu_snapshot_t *state);
+
 #endif
 

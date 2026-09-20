@@ -19,6 +19,8 @@
 
 // � supprimer !
 extern uint32	ws_cyclesByLine;
+extern uint32	ws_cycles;
+extern uint32	ws_skip;
 
 int ws_init(uint8  *rom, size_t romSize);
 int		ws_rotated(void);

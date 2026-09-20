@@ -1632,3 +1632,22 @@ uint8_t __not_in_flash_func(ws_gpu_port_read)(uint8_t port) {
     }
     return (ws_ioRam[port]);
 }
+
+void ws_gpu_snapshot_get(ws_gpu_snapshot_t *state) {
+    state->scanline = ws_gpu_scanline; state->operating_in_color = ws_gpu_operatingInColor; state->video_mode = ws_videoMode;
+    memcpy(state->sprite_table, ws_spriteTable, sizeof(ws_spriteTable));
+    memcpy(state->sprite_count_cache, ws_spriteCountCache, sizeof(ws_spriteCountCache));
+    state->sprite_table_active = ws_spriteTableActive;
+    memcpy(state->palette, ws_palette, sizeof(ws_palette)); memcpy(state->palette_colors, ws_paletteColors, sizeof(ws_paletteColors));
+    memcpy(state->color_palette, wsc_palette, sizeof(wsc_palette));
+    state->force_color = ws_gpu_forceColorSystemBool; state->force_mono = ws_gpu_forceMonoSystemBool;
+}
+void ws_gpu_snapshot_set(const ws_gpu_snapshot_t *state) {
+    ws_gpu_scanline = state->scanline; ws_gpu_operatingInColor = state->operating_in_color; ws_videoMode = state->video_mode;
+    memcpy(ws_spriteTable, state->sprite_table, sizeof(ws_spriteTable)); memcpy(ws_spriteCountCache, state->sprite_count_cache, sizeof(ws_spriteCountCache));
+    ws_spriteTableActive = state->sprite_table_active;
+    memcpy(ws_palette, state->palette, sizeof(ws_palette)); memcpy(ws_paletteColors, state->palette_colors, sizeof(ws_paletteColors));
+    memcpy(wsc_palette, state->color_palette, sizeof(wsc_palette));
+    ws_gpu_forceColorSystemBool = state->force_color; ws_gpu_forceMonoSystemBool = state->force_mono;
+    ws_gpu_clearCache(); ws_gpu_refresh_palette();
+}

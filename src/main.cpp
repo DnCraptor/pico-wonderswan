@@ -25,6 +25,8 @@ extern "C" {
 #include "ws_audio.h"
 #include "io.h"
 #include "gpu.h"
+#include "memory.h"
+#include "nec/necintrf.h"
 }
 
 #define HOME_DIR "\\WS"
@@ -764,50 +766,78 @@ bool overclock() {
 #endif
 }
 
-bool save() {
-    char pathname[255];
-//    const size_t size = supervision_save_state_buf_size();
-//    uint8_t data[size];
+#define WS_STATE_MAGIC 0x31535357u /* WSS1 */
+#define WS_STATE_VERSION 1u
 
-    if (save_slot) {
-        sprintf(pathname, "%s\\%s_%d.save", HOME_DIR, filename, save_slot);
-    } else {
-        sprintf(pathname, "%s\\%s.save", HOME_DIR, filename);
-    }
+typedef struct {
+    nec_snapshot_t cpu;
+    ws_io_snapshot_t io;
+    ws_gpu_snapshot_t gpu;
+    ws_audio_snapshot_t audio;
+} ws_state_core_t;
 
-    FRESULT fr = f_mount(&fs, "", 1);
-    FIL fd;
-    fr = f_open(&fd, pathname, FA_CREATE_ALWAYS | FA_WRITE);
-    UINT bytes_writen;
+typedef struct __attribute__((packed)) {
+    uint32_t magic, version, rom_size;
+    uint16_t rom_crc, reserved;
+    uint32_t internal_ram_size, sram_size, eeprom_size;
+    uint32_t cpu_size, io_size, gpu_size, audio_size;
+    uint32_t ws_cycles, ws_skip, ws_cycles_by_line;
+} ws_state_header_t;
 
-//    supervision_save_state_buf((uint8*)data, (uint32)size);
-//    f_write(&fd, data, size, &bytes_writen);
-    f_close(&fd);
-
+static bool state_write(FIL *fd, const void *data, UINT size) {
+    UINT done = 0;
+    return f_write(fd, data, size, &done) == FR_OK && done == size;
+}
+static bool state_read(FIL *fd, void *data, UINT size) {
+    UINT done = 0;
+    return f_read(fd, data, size, &done) == FR_OK && done == size;
+}
+static bool state_write_cart(FIL *fd, uint32_t base, uint32_t size) {
+    uint8_t buf[256];
+    while (size) { const uint32_t n = size > sizeof(buf) ? sizeof(buf) : size; readpsram(buf, base, n); if (!state_write(fd, buf, n)) return false; base += n; size -= n; }
+    return true;
+}
+static bool state_read_cart(FIL *fd, uint32_t base, uint32_t size) {
+    uint8_t buf[256];
+    while (size) { const uint32_t n = size > sizeof(buf) ? sizeof(buf) : size; if (!state_read(fd, buf, n)) return false; writepsram(base, buf, n); base += n; size -= n; }
     return true;
 }
 
-bool load() {
+bool save() {
+    if (!rom_size || save_slot < 1 || save_slot > 8) return false;
     char pathname[255];
-//    const size_t size = supervision_save_state_buf_size();
-//    auto * data = (uint8_t *)(malloc(size));
-
-    if (save_slot) {
-        sprintf(pathname, "%s\\%s_%d.save", HOME_DIR, filename, save_slot);
-    } else {
-        sprintf(pathname, "%s\\%s.save", HOME_DIR, filename);
-    }
-
-    FRESULT fr = f_mount(&fs, "", 1);
-    FIL fd;
-    fr = f_open(&fd, pathname, FA_READ);
-    UINT bytes_read;
-
-//    f_read(&fd, data, size, &bytes_read);
-//    supervision_load_state_buf((uint8*)data, (uint32)size);
+    snprintf(pathname, sizeof(pathname), "%s\\%s_%d.save", HOME_DIR, filename, save_slot);
+    ws_state_core_t *state = (ws_state_core_t *)malloc(sizeof(*state));
+    if (!state) return false;
+    nec_snapshot_get(&state->cpu); ws_io_snapshot_get(&state->io); ws_gpu_snapshot_get(&state->gpu); ws_audio_snapshot_get(&state->audio);
+    ws_state_header_t h = { WS_STATE_MAGIC, WS_STATE_VERSION, (uint32_t)rom_size, memory_getRomCrc(), 0,
+        sizeof(internalRam), ws_memory_get_sram_size(), ws_memory_get_eeprom_size(), sizeof(state->cpu), sizeof(state->io), sizeof(state->gpu), sizeof(state->audio), ws_cycles, ws_skip, ws_cyclesByLine };
+    if (f_mount(&fs, "", 1) != FR_OK) { free(state); return false; }
+    FIL fd; if (f_open(&fd, pathname, FA_CREATE_ALWAYS | FA_WRITE) != FR_OK) { free(state); return false; }
+    bool ok = state_write(&fd, &h, sizeof(h)) && state_write(&fd, &state->cpu, sizeof(state->cpu)) && state_write(&fd, &state->io, sizeof(state->io)) && state_write(&fd, &state->gpu, sizeof(state->gpu)) && state_write(&fd, &state->audio, sizeof(state->audio)) && state_write(&fd, internalRam, sizeof(internalRam)) && state_write_cart(&fd, 1u << 20, h.sram_size) && state_write_cart(&fd, 0, h.eeprom_size);
+    if (ok) ok = f_sync(&fd) == FR_OK;
     f_close(&fd);
+    free(state);
+    if (!ok) f_unlink(pathname);
+    return ok;
+}
 
-//    free(data);
+bool load() {
+    if (!rom_size || save_slot < 1 || save_slot > 8) return false;
+    char pathname[255];
+    snprintf(pathname, sizeof(pathname), "%s\\%s_%d.save", HOME_DIR, filename, save_slot);
+    if (f_mount(&fs, "", 1) != FR_OK) return false;
+    FIL fd; if (f_open(&fd, pathname, FA_READ) != FR_OK) return false;
+    ws_state_header_t h; bool ok = state_read(&fd, &h, sizeof(h));
+    ok = ok && h.magic == WS_STATE_MAGIC && h.version == WS_STATE_VERSION && h.rom_size == rom_size && h.rom_crc == memory_getRomCrc() && h.internal_ram_size == sizeof(internalRam) && h.sram_size == ws_memory_get_sram_size() && h.eeprom_size == ws_memory_get_eeprom_size() && h.cpu_size == sizeof(nec_snapshot_t) && h.io_size == sizeof(ws_io_snapshot_t) && h.gpu_size == sizeof(ws_gpu_snapshot_t) && h.audio_size == sizeof(ws_audio_snapshot_t);
+    ws_state_core_t *state = ok ? (ws_state_core_t *)malloc(sizeof(*state)) : nullptr;
+    if (ok && !state) ok = false;
+    if (ok) ok = state_read(&fd, &state->cpu, sizeof(state->cpu)) && state_read(&fd, &state->io, sizeof(state->io)) && state_read(&fd, &state->gpu, sizeof(state->gpu)) && state_read(&fd, &state->audio, sizeof(state->audio)) && state_read(&fd, internalRam, sizeof(internalRam)) && state_read_cart(&fd, 1u << 20, h.sram_size) && state_read_cart(&fd, 0, h.eeprom_size);
+    f_close(&fd);
+    if (!ok) { free(state); return false; }
+    ws_cycles = h.ws_cycles; ws_skip = h.ws_skip; ws_cyclesByLine = h.ws_cycles_by_line;
+    nec_snapshot_set(&state->cpu); ws_io_snapshot_set(&state->io); ws_gpu_snapshot_set(&state->gpu); ws_audio_snapshot_set(&state->audio);
+    free(state);
     return true;
 }
 #if SOFTTV
@@ -1243,6 +1273,13 @@ int main() {
         uint64_t next_ws_frame = time_us_64() + 13250;
 #endif
         while (!reboot) {
+            if (fxPressedV) {
+                const uint8_t slot = fxPressedV;
+                fxPressedV = 0;
+                save_slot = slot;
+                if (altPressed) load();
+                else if (ctrlPressed) save();
+            }
             ws_key_start = gamepad1_bits.start;
 
             ws_key_up = gamepad1_bits.up;

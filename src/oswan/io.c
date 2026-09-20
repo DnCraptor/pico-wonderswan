@@ -430,3 +430,6 @@ void __not_in_flash_func(cpu_writeport)(uint32_t port, uint8_t value) {
 //		fprintf(log_get(),"io: writing 0x%.2x to unknown port 0x%.2x\n",value,port); 
 //	}
 }
+
+void ws_io_snapshot_get(ws_io_snapshot_t *state) { memcpy(state->io_ram, ws_ioRam, sizeof(ws_ioRam)); memcpy(state->internal_eeprom, internalEeprom, sizeof(internalEeprom)); state->rtc_read_count=rtcDataRegisterReadCount; state->controls_flipped=ws_key_flipped; }
+void ws_io_snapshot_set(const ws_io_snapshot_t *state) { memcpy(ws_ioRam, state->io_ram, sizeof(ws_ioRam)); memcpy(internalEeprom, state->internal_eeprom, sizeof(internalEeprom)); rtcDataRegisterReadCount=state->rtc_read_count; ws_key_flipped=state->controls_flipped; for (uint32 p=0xc0;p<=0xc3;++p) ws_memory_rom_bank_changed(p); }

@@ -31,6 +31,8 @@ void	ws_memory_reset(void);
 uint8	*memory_getRom(void);
 uint32	memory_getRomSize(void);
 uint16	memory_getRomCrc(void);
+uint32 ws_memory_get_sram_size(void);
+uint32 ws_memory_get_eeprom_size(void);
 void	ws_memory_done(void);
 void memory_load(int fp);
 void memory_save(int fp);

@@ -88,7 +88,36 @@ static nec_Regs I;
 static UINT32 cpu_type;
 static UINT32 prefix_base;	/* base address of the latest prefix segment */
 char seg_prefix;		/* prefix segment indicator */
+static int no_interrupt;
 
+
+void nec_snapshot_get(nec_snapshot_t *state)
+{
+    memcpy(state->regs, I.regs.w, sizeof(state->regs));
+    memcpy(state->sregs, I.sregs, sizeof(state->sregs));
+    state->ip = I.ip;
+    state->sign_val = I.SignVal; state->aux_val = I.AuxVal; state->over_val = I.OverVal;
+    state->zero_val = I.ZeroVal; state->carry_val = I.CarryVal; state->parity_val = I.ParityVal;
+    state->tf = I.TF; state->iff = I.IF; state->df = I.DF; state->mf = I.MF;
+    state->int_vector = I.int_vector; state->pending_irq = I.pending_irq;
+    state->nmi_state = I.nmi_state; state->irq_state = I.irq_state;
+    state->cpu_type = cpu_type; state->prefix_base = prefix_base; state->seg_prefix = (uint8_t)seg_prefix;
+    state->total_clock = nec_TotalClock; state->icount = nec_ICount; state->no_interrupt = no_interrupt;
+}
+
+void nec_snapshot_set(const nec_snapshot_t *state)
+{
+    memcpy(I.regs.w, state->regs, sizeof(state->regs));
+    memcpy(I.sregs, state->sregs, sizeof(state->sregs));
+    I.ip = state->ip;
+    I.SignVal = state->sign_val; I.AuxVal = state->aux_val; I.OverVal = state->over_val;
+    I.ZeroVal = state->zero_val; I.CarryVal = state->carry_val; I.ParityVal = state->parity_val;
+    I.TF = state->tf; I.IF = state->iff; I.DF = state->df; I.MF = state->mf;
+    I.int_vector = state->int_vector; I.pending_irq = state->pending_irq;
+    I.nmi_state = state->nmi_state; I.irq_state = state->irq_state;
+    cpu_type = state->cpu_type; prefix_base = state->prefix_base; seg_prefix = (char)state->seg_prefix;
+    nec_TotalClock = state->total_clock; nec_ICount = state->icount; no_interrupt = state->no_interrupt;
+}
 
 /* The interrupt number of a pending external interrupt pending NMI is 2.	*/
 /* For INTR interrupts, the level is caught on the bus during an INTA cycle */
@@ -97,8 +126,6 @@ char seg_prefix;		/* prefix segment indicator */
 #include "necinstr.h"
 #include "necea.h"
 #include "necmodrm.h"
-
-static int no_interrupt;
 
 static UINT8 parity_table[256];
 
