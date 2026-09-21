@@ -112,6 +112,7 @@ static bool keyboard_9 = false, keyboard_0 = false;
 /* Palette editor owns hexadecimal key presses while it is open. */
 static volatile bool palette_editor_active = false;
 static volatile int8_t palette_hex_key = -1;
+static volatile bool palette_f12_requested = false;
 
 static bool portrait_enabled() {
     bool portrait;
@@ -181,6 +182,10 @@ void process_kbd_report(hid_keyboard_report_t const* report, hid_keyboard_report
     // resolved in the emulation loop together with the native X/Y groups.
     keyboard_bits.b = isInReport(report, HID_KEY_Z);
     keyboard_bits.a = isInReport(report, HID_KEY_X);
+
+    /* F12 is an edge-triggered direct palette-editor toggle. */
+    if (isInReport(report, HID_KEY_F12) && !isInReport(prev_report, HID_KEY_F12))
+        palette_f12_requested = true;
 
     if (palette_editor_active) {
         int8_t hex = -1;
@@ -1395,6 +1400,21 @@ static bool show_current_palettes(void) {
     palette_repeat_t rep_left = {}, rep_right = {}, rep_up = {}, rep_down = {};
 
     for (;;) {
+        if (palette_f12_requested) {
+            palette_f12_requested = false;
+            palette_preview_apply_palette();
+            if (game_palette_linked) {
+                game_palette_write();
+            } else {
+                capture_global_palette();
+                save_config();
+            }
+            palette_editor_active = false;
+            palette_hex_key = -1;
+            graphics_set_mode(GRAPHICSMODE_DEFAULT);
+            return true;
+        }
+
         const bool left_level  = keyboard_bits.left  || (nespad_state & DPAD_LEFT);
         const bool right_level = keyboard_bits.right || (nespad_state & DPAD_RIGHT);
         const bool up_level    = keyboard_bits.up    || (nespad_state & DPAD_UP);
@@ -1959,6 +1979,15 @@ int main() {
         uint64_t next_ws_frame = time_us_64() + 13250;
 #endif
         while (!reboot) {
+            if (palette_f12_requested) {
+                palette_f12_requested = false;
+                show_current_palettes();
+                /* Do not count time spent in the palette editor as slowdown. */
+                fps_started = time_us_64();
+                fps_frames = 0;
+                graphics_set_fps_overlay(show_fps, 0);
+            }
+
             if (fxPressedV) {
                 /* A quick-state operation takes ownership of the current ROM;
                    stop Demo so it cannot replace that ROM afterwards. */
