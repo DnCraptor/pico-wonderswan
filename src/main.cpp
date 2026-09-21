@@ -1012,7 +1012,12 @@ bool toggle_color() {
     return true;
 }
 #endif
-int palette_index = 0;
+enum palette_mode_e : uint8_t {
+    PALETTE_DEFAULT = 0,
+    PALETTE_COLD = 1,
+    PALETTE_CUSTOM = 2
+};
+uint8_t palette_index = PALETTE_DEFAULT;
 bool show_fps = false;
 uint8_t audio_volume = 4;
 uint8_t audio_rate_shift = 0;
@@ -1057,6 +1062,13 @@ static bool game_palette_linked = false;
 static uint32_t global_ws_shades[16];
 static bool global_palette_valid = false;
 
+static const uint32_t cold_ws_shades[16] = {
+    0xf1fcff, 0xfce0ff, 0x978bd5, 0xc48fbe,
+    0x9fdfa9, 0xf2942b, 0x34758c, 0x019901,
+    0x30654e, 0x5c5121, 0x185949, 0x473db3,
+    0x321600, 0xa01616, 0x2e0c57, 0x0c0422
+};
+
 static void capture_global_palette(void) {
     for (unsigned i = 0; i < 16; ++i)
         global_ws_shades[i] = ws_shades[i] & 0x00ffffffu;
@@ -1075,6 +1087,23 @@ static void apply_global_palette(void) {
 static void apply_current_palette_to_video(void) {
     for (unsigned i = 0; i < 16; ++i)
         graphics_set_palette((uint8_t)i, ws_shades[i]);
+}
+
+static void apply_selected_palette(void) {
+    switch (palette_index) {
+        case PALETTE_COLD:
+            for (unsigned i = 0; i < 16; ++i)
+                ws_shades[i] = cold_ws_shades[i];
+            break;
+        case PALETTE_CUSTOM:
+            apply_global_palette();
+            break;
+        case PALETTE_DEFAULT:
+        default:
+            ws_set_colour_scheme(0);
+            break;
+    }
+    apply_current_palette_to_video();
 }
 
 
@@ -1543,10 +1572,11 @@ static bool show_current_palettes(void) {
 
 const MenuItem menu_items[] = {
         { "Swap AB <> BA: %s", ARRAY, &swap_ab, nullptr, 1, { "NO ", "YES" }},
-        { "Screen rotation: %s", ARRAY, &rotation_mode, nullptr, 3, { "Auto", "Landscape", "Portrait ", "Manual   " }},
+        { "Screen rotation: %s", ARRAY, &rotation_mode, nullptr, 3, { "Auto     ", "Landscape", "Portrait ", "Manual   " }},
         { "FPS overlay: %s", ARRAY, &show_fps, nullptr, 1, { "OFF", "ON " }},
         { "Volume: %s", ARRAY, &audio_volume, &apply_audio_volume, 4, { "Mute", "12% ", "25% ", "50% ", "100%" }},
         { "Emulate Sound: %s", ARRAY, &audio_rate_shift, &apply_audio_rate, 3, { "24 kHz", "12 kHz", "6 kHz ", "3 kHz " }},
+        { "Palette: %s", ARRAY, &palette_index, nullptr, 2, { "Default  ", "Cold     ", "Custom   " }},
         {},
         //{ "Player 1: %s",        ARRAY, &player_1_input, 2, { "Keyboard ", "Gamepad 1", "Gamepad 2" }},
         //{ "Player 2: %s",        ARRAY, &player_2_input, 2, { "Keyboard ", "Gamepad 1", "Gamepad 2" }},
@@ -1680,6 +1710,8 @@ static void menu(bool game_loaded) {
                                 apply_audio_volume();
                             else if (changed && item->value == &audio_rate_shift)
                                 apply_audio_rate();
+                            else if (changed && item->value == &palette_index)
+                                apply_selected_palette();
                         }
                         break;
                     case RETURN:
@@ -1784,8 +1816,9 @@ static void menu(bool game_loaded) {
     /* Keep the effective palette: game override when linked, otherwise the
        global palette.  Rebuilding from palette_index here would discard edits. */
     if (!game_palette_linked)
-        apply_global_palette();
-    apply_current_palette_to_video();
+        apply_selected_palette();
+    else
+        apply_current_palette_to_video();
 
     graphics_set_mode(GRAPHICSMODE_DEFAULT);
     ws_gpu_refresh_palette();
