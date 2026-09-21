@@ -1021,6 +1021,7 @@ uint8_t palette_index = PALETTE_DEFAULT;
 bool show_fps = false;
 uint8_t audio_volume = 4;
 uint8_t audio_rate_shift = 0;
+uint8_t frame_skip = 0;   // 0=75Hz (render every frame) 1=50Hz 2=25Hz 3=Auto
 
 static bool apply_audio_volume() {
     ws_audio_set_enabled(audio_volume != 0);
@@ -1043,7 +1044,7 @@ static bool apply_audio_rate() {
 static bool mono_ws_rom_loaded(bool game_loaded);
 
 #define WS_CONFIG_MAGIC 0x31434657u /* WFC1 */
-#define WS_CONFIG_VERSION 5u
+#define WS_CONFIG_VERSION 6u
 
 typedef struct __attribute__((packed)) {
     uint32_t magic;
@@ -1053,6 +1054,7 @@ typedef struct __attribute__((packed)) {
     uint8_t show_fps;
     uint8_t audio_volume;
     uint8_t audio_rate_shift;
+    uint8_t frame_skip;
     uint8_t demo_duration;
     uint8_t palette_mode;
     uint32_t custom_shades[16];
@@ -1154,6 +1156,7 @@ static bool load_config(void) {
     show_fps = c.show_fps != 0;
     audio_volume = c.audio_volume <= 4 ? c.audio_volume : 4;
     audio_rate_shift = c.audio_rate_shift <= 3 ? c.audio_rate_shift : 0;
+    frame_skip = c.frame_skip <= 3 ? c.frame_skip : 0;
     demo_duration = c.demo_duration < count_of(demo_seconds) ? c.demo_duration : 0;
     palette_index = c.palette_mode <= PALETTE_CUSTOM ? c.palette_mode : PALETTE_DEFAULT;
     for (unsigned i = 0; i < 16; ++i)
@@ -1173,6 +1176,7 @@ static bool save_config(void) {
     c.show_fps = show_fps;
     c.audio_volume = audio_volume;
     c.audio_rate_shift = audio_rate_shift;
+    c.frame_skip = frame_skip;
     c.demo_duration = demo_duration;
     c.palette_mode = palette_index;
     if (!global_palette_valid)
@@ -1600,6 +1604,7 @@ const MenuItem menu_items[] = {
         { "FPS overlay: %s", ARRAY, &show_fps, nullptr, 1, { "OFF", "ON " }},
         { "Volume: %s", ARRAY, &audio_volume, &apply_audio_volume, 4, { "Mute", "12% ", "25% ", "50% ", "100%" }},
         { "Emulate Sound: %s", ARRAY, &audio_rate_shift, &apply_audio_rate, 3, { "24 kHz", "12 kHz", "6 kHz ", "3 kHz " }},
+        { "Frame skip: %s", ARRAY, &frame_skip, nullptr, 3, { "75 Hz", "50 Hz", "25 Hz", "Auto " }},
         { "Palette: %s", ARRAY, &palette_index, nullptr, 2, { "Default  ", "Cold     ", "Custom   " }},
         {},
         //{ "Player 1: %s",        ARRAY, &player_1_input, 2, { "Keyboard ", "Gamepad 1", "Gamepad 2" }},
@@ -2039,6 +2044,8 @@ int main() {
         // frame instead of throttling emulation to the physical video refresh.
         uint64_t next_ws_frame = time_us_64() + 13250;
 #endif
+        uint8_t  fs_phase = 0;      // frame-skip phase counter (mod 3)
+        bool     fs_behind = false; // Auto: did the previous frame overrun its budget
         while (!reboot) {
             if (palette_f12_requested) {
                 palette_f12_requested = false;
@@ -2148,7 +2155,22 @@ int main() {
             if (portrait)
                 buffer = (uint8_t*)SCREEN1;
 
-            while(!ws_executeLine(buffer, 1)) ;
+            /* Emulate every frame (CPU + audio stay at 75 Hz so the game runs at
+               the right speed and the audio ring never starves); only skip the
+               visual render/present. 75/50/25 Hz = render 3/2/1 of every 3.
+               Auto drops the picture only while behind, with a 25 Hz floor so it
+               never freezes. */
+            bool do_render;
+            switch (frame_skip) {
+                case 1:  do_render = (fs_phase != 2);                break; // 50 Hz
+                case 2:  do_render = (fs_phase == 0);                break; // 25 Hz
+                case 3:  do_render = (!fs_behind) || (fs_phase == 0);break; // Auto
+                default: do_render = true;                          break; // 75 Hz
+            }
+            fs_phase = (fs_phase >= 2) ? 0 : (uint8_t)(fs_phase + 1);
+
+            while(!ws_executeLine(buffer, do_render ? 1 : 0)) ;
+            if (do_render) {
             uint8_t *present_buffer = buffer;
             if (portrait) {
 #if defined(VGA)
@@ -2167,6 +2189,7 @@ int main() {
             } else {
                 graphics_set_buffer(present_buffer, 224, 144);
             }
+            }
             frame++;
             ++fps_frames;
             const uint64_t fps_now = time_us_64();
@@ -2183,7 +2206,11 @@ int main() {
             // the newest completed frame waiting for the next physical frame boundary.
             // If emulation outruns scanout, replacing the pending frame is safe: the
             // dropped frame was never scanned out.
-            if (!portrait) {
+            if (portrait) {
+                buffer = (uint8_t*)SCREEN1;
+            } else if (do_render) {
+                /* Pick a free buffer for the next rendered frame. On a skipped
+                   frame we keep the current one (never presented, so still free). */
                 uint8_t* const candidates[] = {
                     (uint8_t*)SCREEN1, (uint8_t*)SCREEN2, (uint8_t*)SCREEN3
                 };
@@ -2202,10 +2229,9 @@ int main() {
                     }
                     if (!buffer) tight_loop_contents();
                 } while (!buffer);
-            } else {
-                buffer = (uint8_t*)SCREEN1;
             }
 
+            fs_behind = ((int64_t)(time_us_64() - next_ws_frame) >= 0);
             while ((int64_t)(time_us_64() - next_ws_frame) < 0) {
 #ifndef HWAY
                 i2s_dma_pump(&i2s_config);   // feed audio DMA while pacing the frame
