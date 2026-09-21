@@ -1745,6 +1745,11 @@ void __time_critical_func(render_core)() {
     uint64_t last_frame_tick = tick;
 
     while (true) {
+#ifdef HWAY
+        /* Physical HWAY writes belong to core1.  Core0 only publishes the
+         * newest PCM byte, so audio output cannot stall emulation. */
+        hway_poll();
+#endif
 
         if (tick >= last_frame_tick + frame_tick) {
 #ifdef TFT

@@ -23,13 +23,22 @@ static uint16_t control_bits;
 static uint8_t last_pcm;
 static bool last_pcm_valid;
 
+#define HWAY_PCM_QUEUE_SIZE 256u
+#define HWAY_PCM_QUEUE_MASK (HWAY_PCM_QUEUE_SIZE - 1u)
+static uint8_t pcm_queue[HWAY_PCM_QUEUE_SIZE];
+static volatile uint32_t pcm_write_pos;
+static volatile uint32_t pcm_read_pos;
+static uint64_t pcm_next_us;
+static uint32_t pcm_frac;
+
 static inline void hway_wait_to_adjust(uint32_t wait_nops) {
     for (uint32_t i = 0; i < wait_nops; ++i)
         __asm volatile("nop");
 }
 
 static void __not_in_flash_func(hway_shift16)(uint16_t data) {
-    /* Same 74HC595 timing used by the working murm386 HWAY backend. */
+    /* Final working murm386 74HC595 timing: about 30 MHz maximum shift
+     * clock, with explicit setup/hold time around every edge. */
     static uint32_t wait_nops;
     if (wait_nops == 0)
         wait_nops = clock_get_hz(clk_sys) / (30000000u * 5u);
@@ -37,9 +46,10 @@ static void __not_in_flash_func(hway_shift16)(uint16_t data) {
     gpio_put(HWAY_CLOCK_PIN, 0);
     hway_wait_to_adjust(wait_nops);
 
-    for (unsigned i = 0; i < 16; ++i) {
+    for (int i = 0; i < 16; ++i) {
         gpio_put(HWAY_DATA_PIN, (data & 0x8000u) != 0);
         data <<= 1;
+
         gpio_put(HWAY_CLOCK_PIN, 1);
         hway_wait_to_adjust(wait_nops);
         gpio_put(HWAY_CLOCK_PIN, 0);
@@ -102,26 +112,65 @@ void hway_init(void) {
     control_bits = 0;
     control_low(AY_ENABLE);
     hway_shift16(control_bits);
-    control_bits = AY_CS_SAA1099 | AY_ENABLE | AY_SAVE | AY_BEEPER |
+    control_bits = AY_CS_SAA1099 | AY_ENABLE | AY_SAVE |
                    AY_CS1 | AY_CS0 | AY_BDIR | AY_BC1;
     hway_shift16(control_bits);
 
     /* PCM-only stage: exactly like murm386, no AY master clock is needed
      * to drive the asynchronous register bus and port-B DAC. */
     last_pcm_valid = false;
+    __atomic_store_n(&pcm_write_pos, 0, __ATOMIC_RELAXED);
+    __atomic_store_n(&pcm_read_pos, 0, __ATOMIC_RELAXED);
+    pcm_next_us = time_us_64();
+    pcm_frac = 0;
 }
 
 void __not_in_flash_func(hway_write_pcm)(uint8_t sample) {
-    if (last_pcm_valid && sample == last_pcm)
+    /* SPSC queue: core0 produces complete 24 kHz PCM samples; core1 consumes
+     * them at the physical sample clock.  Never collapse the stream to the
+     * newest byte: that destroys PCM timing whenever emulation runs in bursts. */
+    const uint32_t write = __atomic_load_n(&pcm_write_pos, __ATOMIC_RELAXED);
+    const uint32_t read = __atomic_load_n(&pcm_read_pos, __ATOMIC_ACQUIRE);
+    if (write - read >= HWAY_PCM_QUEUE_SIZE)
         return;
-    last_pcm = sample;
-    last_pcm_valid = true;
+    pcm_queue[write & HWAY_PCM_QUEUE_MASK] = sample;
+    __atomic_store_n(&pcm_write_pos, write + 1u, __ATOMIC_RELEASE);
+}
 
-    /* Exact working pico-gamate COVOX bus sequence:
-     * second AY -> R7=0x80 -> R15=sample. */
-    select_chip(1);
-    select_register(7);
-    write_data(0x80);
-    select_register(15);
-    write_data(sample);
+void __not_in_flash_func(hway_poll)(void) {
+    uint64_t now = time_us_64();
+    while ((int64_t)(now - pcm_next_us) >= 0) {
+        /* Exact 24 kHz pacing: 41 + 2/3 us per sample. */
+        pcm_next_us += 41u;
+        pcm_frac += 2u;
+        if (pcm_frac >= 3u) {
+            pcm_frac -= 3u;
+            ++pcm_next_us;
+        }
+
+        const uint32_t read = __atomic_load_n(&pcm_read_pos, __ATOMIC_RELAXED);
+        const uint32_t write = __atomic_load_n(&pcm_write_pos, __ATOMIC_ACQUIRE);
+        if (read == write) {
+            /* No backlog means there is nothing to catch up later. */
+            pcm_next_us = now + 41u;
+            pcm_frac = 2u;
+            break;
+        }
+
+        const uint8_t sample = pcm_queue[read & HWAY_PCM_QUEUE_MASK];
+        __atomic_store_n(&pcm_read_pos, read + 1u, __ATOMIC_RELEASE);
+
+        if (last_pcm_valid && sample == last_pcm)
+            continue;
+        last_pcm = sample;
+        last_pcm_valid = true;
+
+        select_chip(1);
+        select_register(7);
+        write_data(0x80);
+        select_register(15);
+        write_data(sample);
+
+        now = time_us_64();
+    }
 }

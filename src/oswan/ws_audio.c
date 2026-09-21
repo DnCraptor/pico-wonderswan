@@ -283,11 +283,12 @@ static void __not_in_flash_func(emit_sample)(void) {
      * mixer, instead of trying to infer PCM timing from guest port writes. */
     const int32 sample_left = clamp16(out_left);
     const int32 sample_right = clamp16(out_right);
-    int32 mono = (sample_left + sample_right) / 2;
-    /* The WS legacy mixer is about +/-15360 at full scale after DC removal.
-     * Expand that to the full signed 16-bit range before feeding the 8-bit
-     * external DAC, then apply the same 12/25/50/100% volume steps. */
-    int32 scaled = (mono * 32767) / 15360;
+
+    /* One full-volume WS wavetable channel is only about +/-3600 here.
+     * Preserve one-sided stereo energy for the mono DAC, normalize that
+     * channel close to full scale, and saturate louder combinations. */
+    int32 mono = sample_left + sample_right;
+    int32 scaled = (mono * 30000) / 3600;
     if (scaled < -32768) scaled = -32768;
     if (scaled >  32767) scaled =  32767;
     static const uint8 hway_gain_shift[5] = { 0, 3, 2, 1, 0 };
