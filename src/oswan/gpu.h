@@ -23,6 +23,7 @@ extern	int16	ws_palette[16*4];
 extern	int8	ws_paletteColors[8];
 extern	int16	wsc_palette[16*16];
 extern  unsigned int ws_gpu_unknownPort;
+extern const uint32 ws_colour_scheme_default[16];
 
 
 void ws_gpu_init(void);

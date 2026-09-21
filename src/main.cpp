@@ -1043,7 +1043,7 @@ static bool apply_audio_rate() {
 static bool mono_ws_rom_loaded(bool game_loaded);
 
 #define WS_CONFIG_MAGIC 0x31434657u /* WFC1 */
-#define WS_CONFIG_VERSION 4u
+#define WS_CONFIG_VERSION 5u
 
 typedef struct __attribute__((packed)) {
     uint32_t magic;
@@ -1054,8 +1054,8 @@ typedef struct __attribute__((packed)) {
     uint8_t audio_volume;
     uint8_t audio_rate_shift;
     uint8_t demo_duration;
-    uint8_t reserved[1];
-    uint32_t global_shades[16];
+    uint8_t palette_mode;
+    uint32_t custom_shades[16];
 } ws_config_t;
 
 static bool game_palette_linked = false;
@@ -1069,6 +1069,12 @@ static const uint32_t cold_ws_shades[16] = {
     0x321600, 0xa01616, 0x2e0c57, 0x0c0422
 };
 
+static void init_custom_palette_from_default(void) {
+    for (unsigned i = 0; i < 16; ++i)
+        global_ws_shades[i] = ws_colour_scheme_default[i] & 0x00ffffffu;
+    global_palette_valid = true;
+}
+
 static void capture_global_palette(void) {
     for (unsigned i = 0; i < 16; ++i)
         global_ws_shades[i] = ws_shades[i] & 0x00ffffffu;
@@ -1076,10 +1082,8 @@ static void capture_global_palette(void) {
 }
 
 static void apply_global_palette(void) {
-    if (!global_palette_valid) {
-        ws_set_colour_scheme(palette_index);
-        capture_global_palette();
-    }
+    if (!global_palette_valid)
+        init_custom_palette_from_default();
     for (unsigned i = 0; i < 16; ++i)
         ws_shades[i] = global_ws_shades[i];
 }
@@ -1104,6 +1108,16 @@ static void apply_selected_palette(void) {
             break;
     }
     apply_current_palette_to_video();
+}
+
+static void ensure_custom_palette_for_edit(void) {
+    if (palette_index == PALETTE_CUSTOM)
+        return;
+
+    /* Fork a preset only on the first real edit. Opening and closing the
+       editor without changing a colour must not overwrite Custom. */
+    capture_global_palette();
+    palette_index = PALETTE_CUSTOM;
 }
 
 
@@ -1141,8 +1155,9 @@ static bool load_config(void) {
     audio_volume = c.audio_volume <= 4 ? c.audio_volume : 4;
     audio_rate_shift = c.audio_rate_shift <= 3 ? c.audio_rate_shift : 0;
     demo_duration = c.demo_duration < count_of(demo_seconds) ? c.demo_duration : 0;
+    palette_index = c.palette_mode <= PALETTE_CUSTOM ? c.palette_mode : PALETTE_DEFAULT;
     for (unsigned i = 0; i < 16; ++i)
-        global_ws_shades[i] = c.global_shades[i] & 0x00ffffffu;
+        global_ws_shades[i] = c.custom_shades[i] & 0x00ffffffu;
     global_palette_valid = true;
     return true;
 }
@@ -1159,12 +1174,11 @@ static bool save_config(void) {
     c.audio_volume = audio_volume;
     c.audio_rate_shift = audio_rate_shift;
     c.demo_duration = demo_duration;
-    if (!global_palette_valid) {
-        ws_set_colour_scheme(palette_index);
-        capture_global_palette();
-    }
+    c.palette_mode = palette_index;
+    if (!global_palette_valid)
+        init_custom_palette_from_default();
     for (unsigned i = 0; i < 16; ++i)
-        c.global_shades[i] = global_ws_shades[i] & 0x00ffffffu;
+        c.custom_shades[i] = global_ws_shades[i] & 0x00ffffffu;
 
     FIL file;
     if (f_open(&file, "/.config/wonderswan/wonderswan.conf", FA_CREATE_ALWAYS | FA_WRITE) != FR_OK)
@@ -1241,8 +1255,11 @@ static bool game_palette_read(void) {
     if (n != 16) return false;
     for (unsigned i = 0; i < 16; ++i) {
         if (c[i] > 0xfffffful) return false;
-        ws_shades[i] = (uint32_t)c[i];
+        global_ws_shades[i] = (uint32_t)c[i];
     }
+    global_palette_valid = true;
+    palette_index = PALETTE_CUSTOM;
+    apply_global_palette();
     return true;
 }
 
@@ -1258,8 +1275,10 @@ static bool game_palette_action(void) {
             apply_current_palette_to_video();
         }
     } else if (game_palette_write()) {
-        /* The current colours become this game's override.  From now on the
-           editor writes this INI and leaves the global palette untouched. */
+        /* A game palette is Custom by definition.  Keep the exact colours
+           that were just written as the editable Custom palette as well. */
+        capture_global_palette();
+        palette_index = PALETTE_CUSTOM;
         game_palette_linked = true;
     }
     return false;
@@ -1439,7 +1458,8 @@ static bool show_current_palettes(void) {
             if (game_palette_linked) {
                 game_palette_write();
             } else {
-                capture_global_palette();
+                if (palette_index == PALETTE_CUSTOM)
+                        capture_global_palette();
                 save_config();
             }
             palette_editor_active = false;
@@ -1472,6 +1492,7 @@ static bool show_current_palettes(void) {
             palette_hex_key = -1;
             if (hex_digit < 0) hex_digit = 0;
             const unsigned shift = (unsigned)(5 - hex_digit) * 4u;
+            ensure_custom_palette_for_edit();
             uint32_t rgb = ws_shades[selected] & 0x00ffffffu;
             rgb = (rgb & ~(0x0fu << shift)) | ((uint32_t)typed_hex << shift);
             ws_shades[selected] = rgb;
@@ -1506,7 +1527,8 @@ static bool show_current_palettes(void) {
                 if (game_palette_linked) {
                     game_palette_write();
                 } else {
-                    capture_global_palette();
+                    if (palette_index == PALETTE_CUSTOM)
+                        capture_global_palette();
                     save_config();
                 }
                 palette_editor_active = false;
@@ -1525,6 +1547,7 @@ static bool show_current_palettes(void) {
                 redraw = true;
             } else if (up || down) {
                 const unsigned shift = (unsigned)(2 - edit_channel) * 8u;
+                ensure_custom_palette_for_edit();
                 uint32_t rgb = ws_shades[selected] & 0x00ffffffu;
                 unsigned value = (rgb >> shift) & 0xffu;
                 if (up)
@@ -1547,7 +1570,8 @@ static bool show_current_palettes(void) {
                 if (game_palette_linked) {
                     game_palette_write();
                 } else {
-                    capture_global_palette();
+                    if (palette_index == PALETTE_CUSTOM)
+                        capture_global_palette();
                     save_config();
                 }
                 palette_editor_active = false;
@@ -1985,13 +2009,13 @@ int main() {
             ws_set_system(WS_SYSTEM_MONO);
         }
 
-        /* Two-level palette model: every ROM starts from the persistent
-           global palette; a per-game INI, when present, overrides it. */
-        apply_global_palette();
+        /* Start from the selected persistent palette.  A per-game INI is
+           loaded into Custom and selects Custom automatically. */
+        apply_selected_palette();
         game_palette_linked = mono_ws_rom_loaded(true) && game_palette_exists();
         if (game_palette_linked && !game_palette_read()) {
             game_palette_linked = false;
-            apply_global_palette();
+            apply_selected_palette();
         }
         ws_reset();
         apply_current_palette_to_video();
