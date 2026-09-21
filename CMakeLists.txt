@@ -21,9 +21,9 @@ set(PICO_BOARD_HEADER_DIRS ${CMAKE_CURRENT_LIST_DIR}/boards)
 set(PICO_PLATFORM "rp2350" CACHE STRING "Chip type")
 #set(PICO_BOARD "murmulator" CACHE STRING "Board type")
 #set(PICO_BOARD "murmulator2" CACHE STRING "Board type")
-set(PICO_BOARD "olimex-pico-pc" CACHE STRING "Board type")
+#set(PICO_BOARD "olimex-pico-pc" CACHE STRING "Board type")
 #set(PICO_BOARD "waveshare_rp2040_pizero" CACHE STRING "Board type")
-#set(PICO_BOARD "waveshare_rp2350_pizero" CACHE STRING "Board type")
+set(PICO_BOARD "waveshare_rp2350_pizero" CACHE STRING "Board type")
 include(pico_sdk_import.cmake)
 
 project(wonderswan C CXX ASM)
@@ -56,6 +56,7 @@ add_subdirectory(drivers/audio)
 
 add_subdirectory(drivers/ps2kbd)
 add_subdirectory(drivers/nespad)
+add_subdirectory(drivers/usbhid)
 add_subdirectory(drivers/fatfs)
 add_subdirectory(drivers/sdcard)
 add_subdirectory(drivers/psram)
@@ -167,6 +168,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
 		audio
 
 		nespad
+		usbhid
 		sdcard
 		ps2kbd
 		fatfs
@@ -185,8 +187,8 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
         hardware_pwm
         hardware_flash
 
-#		tinyusb_board
-		tinyusb_device
+		tinyusb_board
+		tinyusb_host
 )
 target_compile_definitions(${PROJECT_NAME} PRIVATE
 		USE_PS2_KBD
@@ -202,7 +204,7 @@ target_link_options(${PROJECT_NAME} PRIVATE -Xlinker --print-memory-usage --data
 #		COMMAND arm-none-eabi-size --format=berkeley "../bin/Debug/${BUILD_NAME}.elf")
 
 pico_enable_stdio_uart(${PROJECT_NAME} 0)
-pico_enable_stdio_usb(${PROJECT_NAME} 1)
+pico_enable_stdio_usb(${PROJECT_NAME} 0)
 pico_add_extra_outputs(${PROJECT_NAME})
 
 

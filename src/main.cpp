@@ -14,6 +14,7 @@
 #include "audio.h"
 
 #include "nespad.h"
+#include "usbhid.h"
 #include "ff.h"
 #include "ps2kbd_mrmltr.h"
 #include "psram_spi.h"
@@ -145,15 +146,18 @@ extern	uint8	ws_key_y1, ws_key_y2, ws_key_y3, ws_key_y4;
 static void nespad_tick() {
     nespad_read();
 
-    gamepad1_bits.a = (nespad_state & DPAD_A) != 0;
-    gamepad1_bits.b = (nespad_state & DPAD_B) != 0;
+    const uint32_t usbpad = usbhid_gamepad_state();
+    const uint32_t pad = nespad_state | usbpad;
 
-    gamepad1_bits.select = keyboard_bits.select || (nespad_state & DPAD_SELECT) != 0;
-    gamepad1_bits.start = keyboard_bits.start || (nespad_state & DPAD_START) != 0;
-    gamepad1_bits.up = keyboard_bits.up || (nespad_state & DPAD_UP) != 0;
-    gamepad1_bits.down = keyboard_bits.down || (nespad_state & DPAD_DOWN) != 0;
-    gamepad1_bits.left = keyboard_bits.left || (nespad_state & DPAD_LEFT) != 0;
-    gamepad1_bits.right = keyboard_bits.right || (nespad_state & DPAD_RIGHT) != 0;
+    gamepad1_bits.a = (pad & DPAD_A) != 0;
+    gamepad1_bits.b = (pad & DPAD_B) != 0;
+
+    gamepad1_bits.select = keyboard_bits.select || (pad & DPAD_SELECT) != 0;
+    gamepad1_bits.start = keyboard_bits.start || (pad & DPAD_START) != 0;
+    gamepad1_bits.up = keyboard_bits.up || (pad & DPAD_UP) != 0;
+    gamepad1_bits.down = keyboard_bits.down || (pad & DPAD_DOWN) != 0;
+    gamepad1_bits.left = keyboard_bits.left || (pad & DPAD_LEFT) != 0;
+    gamepad1_bits.right = keyboard_bits.right || (pad & DPAD_RIGHT) != 0;
 }
 
 static bool isInReport(hid_keyboard_report_t const* report, const unsigned char keycode) {
@@ -602,13 +606,13 @@ void filebrowser(const char pathname[256], const char executables[11]) {
             sleep_ms(100);
 
             if (!debounce) {
-                debounce = !(nespad_state & DPAD_START || keyboard_bits.start);
+                debounce = !(gamepad1_bits.start);
             }
 
             // SELECT opens the emulator menu even before a cartridge is
             // loaded.  Returning from that menu must come back to the ROM
             // browser, not fall through into ws_init()/emulation.
-            if (nespad_state & DPAD_SELECT || keyboard_bits.select) {
+            if (gamepad1_bits.select) {
                 menu(false);
                 if (demo_requested)
                     return;
@@ -616,7 +620,7 @@ void filebrowser(const char pathname[256], const char executables[11]) {
                 break;
             }
 
-            const bool demo_button = (nespad_state & DPAD_B) || keyboard_bits.b;
+            const bool demo_button = gamepad1_bits.b;
             if (!demo_button)
                 demo_debounce = true;
             if (demo_debounce && demo_button) {
@@ -624,7 +628,7 @@ void filebrowser(const char pathname[256], const char executables[11]) {
                 return;
             }
 
-            if (nespad_state & DPAD_DOWN || keyboard_bits.down) {
+            if (gamepad1_bits.down) {
                 if (offset + (current_item + 1) < total_files) {
                     if (current_item + 1 < per_page) {
                         current_item++;
@@ -634,7 +638,7 @@ void filebrowser(const char pathname[256], const char executables[11]) {
                 }
             }
 
-            if (nespad_state & DPAD_UP || keyboard_bits.up) {
+            if (gamepad1_bits.up) {
                 if (current_item > 0) {
                     current_item--;
                 } else if (offset > 0) {
@@ -642,14 +646,14 @@ void filebrowser(const char pathname[256], const char executables[11]) {
                 }
             }
 
-            if (nespad_state & DPAD_RIGHT || keyboard_bits.right) {
+            if (gamepad1_bits.right) {
                 offset += per_page;
                 if (offset + (current_item + 1) > total_files) {
                     offset = total_files - (current_item + 1);
                 }
             }
 
-            if (nespad_state & DPAD_LEFT || keyboard_bits.left) {
+            if (gamepad1_bits.left) {
                 if (offset > per_page) {
                     offset -= per_page;
                 } else {
@@ -658,7 +662,7 @@ void filebrowser(const char pathname[256], const char executables[11]) {
                 }
             }
 
-            if (debounce && (nespad_state & DPAD_START || keyboard_bits.start)) {
+            if (debounce && (gamepad1_bits.start)) {
                 auto file_at_cursor = fileItems[offset + current_item];
 
                 if (file_at_cursor.is_directory) {
@@ -1415,13 +1419,13 @@ static bool show_current_palettes(void) {
             return true;
         }
 
-        const bool left_level  = keyboard_bits.left  || (nespad_state & DPAD_LEFT);
-        const bool right_level = keyboard_bits.right || (nespad_state & DPAD_RIGHT);
-        const bool up_level    = keyboard_bits.up    || (nespad_state & DPAD_UP);
-        const bool down_level  = keyboard_bits.down  || (nespad_state & DPAD_DOWN);
-        const bool accept_level = keyboard_bits.a || keyboard_bits.start || (nespad_state & DPAD_A);
-        const bool back_level = keyboard_bits.b || keyboard_bits.select || (nespad_state & DPAD_B);
-        const bool start_level = (nespad_state & DPAD_START) != 0;
+        const bool left_level  = gamepad1_bits.left;
+        const bool right_level = gamepad1_bits.right;
+        const bool up_level    = gamepad1_bits.up;
+        const bool down_level  = gamepad1_bits.down;
+        const bool accept_level = keyboard_bits.a || keyboard_bits.start || gamepad1_bits.a;
+        const bool back_level = keyboard_bits.b || keyboard_bits.select || gamepad1_bits.b;
+        const bool start_level = gamepad1_bits.start;
 
         const bool accept = palette_button_pressed(accept_level, &accept_armed, &accept_released);
         const bool back = palette_button_pressed(back_level, &back_armed, &back_released);
@@ -1803,6 +1807,7 @@ void __time_critical_func(render_core)() {
     apply_audio_rate();
 
     ps2kbd.init_gpio();
+    usbhid_init(process_kbd_report);
     nespad_begin(clock_get_hz(clk_sys) / 1000, NES_GPIO_CLK, NES_GPIO_DATA, NES_GPIO_LAT);
 
     graphics_init();
@@ -1847,8 +1852,7 @@ void __time_critical_func(render_core)() {
 
         tick = time_us_64();
 
-        // tuh_task();
-        // hid_app_task();
+        usbhid_task();
         tight_loop_contents();
     }
 
@@ -2033,10 +2037,10 @@ int main() {
 
             portrait = portrait_enabled();
 
-            const bool move_up    = keyboard_bits.up    || (nespad_state & DPAD_UP);
-            const bool move_right = keyboard_bits.right || (nespad_state & DPAD_RIGHT);
-            const bool move_down  = keyboard_bits.down  || (nespad_state & DPAD_DOWN);
-            const bool move_left  = keyboard_bits.left  || (nespad_state & DPAD_LEFT);
+            const bool move_up    = gamepad1_bits.up;
+            const bool move_right = gamepad1_bits.right;
+            const bool move_down  = gamepad1_bits.down;
+            const bool move_left  = gamepad1_bits.left;
 
             bool key_b;
             bool key_a;
