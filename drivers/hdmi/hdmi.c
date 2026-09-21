@@ -393,6 +393,12 @@ static inline bool hdmi_init() {
 
     //выключение SM основной и конвертора
 
+#if PICO_RP2350 && HDMI_BASE_PIN >= 32
+    /* RP2350B GPIO32..39 require a PIO GPIO window that includes them. */
+    pio_set_gpio_base(PIO_VIDEO, 16);
+    pio_set_gpio_base(PIO_VIDEO_ADDR, 16);
+#endif
+
     //pio_sm_restart(PIO_VIDEO, SM_video);
     pio_sm_set_enabled(PIO_VIDEO, SM_video, false);
 
@@ -458,8 +464,17 @@ static inline bool hdmi_init() {
         gpio_set_slew_rate(beginHDMI_PIN_clk + i, GPIO_SLEW_RATE_FAST);
     }
 
+#if PICO_RP2350 && HDMI_BASE_PIN >= 32
+    /* The 32-bit mask helpers cannot represent GPIO32..39. */
+    pio_sm_set_consecutive_pindirs(PIO_VIDEO, SM_video, HDMI_BASE_PIN, 8, true);
+    pio_sm_set_consecutive_pindirs(PIO_VIDEO_ADDR, SM_conv, HDMI_BASE_PIN, 8, true);
+    const uint64_t clk_mask = (uint64_t)3u << beginHDMI_PIN_clk;
+    pio_sm_set_pins_with_mask64(PIO_VIDEO, SM_video, clk_mask, clk_mask);
+    pio_sm_set_pindirs_with_mask64(PIO_VIDEO, SM_video, clk_mask, clk_mask);
+#else
     pio_sm_set_pins_with_mask(PIO_VIDEO, SM_video, 3u << beginHDMI_PIN_clk, 3u << beginHDMI_PIN_clk);
     pio_sm_set_pindirs_with_mask(PIO_VIDEO, SM_video, 3u << beginHDMI_PIN_clk, 3u << beginHDMI_PIN_clk);
+#endif
     //пины
 
     for (int i = 0; i < 6; i++) {
