@@ -39,6 +39,7 @@ static uint8 audio_rate_shift;
 static uint32 audio_pending_cycles;
 #ifdef HWAY
 static uint8 hway_volume = 4;
+static void hway_map_pitch(unsigned ch);
 #endif
 
 /* WonderSwan Color Hyper Voice (ports 64h..6Bh).  The fifth channel is a
@@ -184,6 +185,9 @@ static void __not_in_flash_func(advance_channel)(unsigned ch, uint32 cycles) {
                 if (--sweep_counter == 0) {
                     sweep_counter = sweep_step + 1;
                     period[ch] = (period[ch] + (int8)sweep_value) & 0x7ff;
+#ifdef HWAY
+                    hway_map_pitch(ch);
+#endif
                 }
             }
             const uint32 pt = 2048u - period[ch];
@@ -226,6 +230,70 @@ static int32 __not_in_flash_func(dc_block)(unsigned ch, int32 input) {
     return output;
 }
 
+#ifdef HWAY
+/* WS -> dual AY-3-8910 approximation.  The WonderSwan has four 32x4-bit
+ * wavetable voices, not 32 voices.  We map their note/control semantics to
+ * four AY tone channels and reserve PCM for modes AY cannot represent. */
+static const uint8 hway_ay_chip[4] = { 0, 0, 0, 1 };
+static const uint8 hway_ay_chan[4] = { 0, 1, 2, 0 };
+static uint8 hway_mixer_shadow[2] = { 0x38, 0xb8 };
+
+static uint8 hway_master_shift(void) {
+    static const uint8 shift[5] = { 4, 3, 2, 1, 0 };
+    return shift[hway_volume <= 4 ? hway_volume : 4];
+}
+
+static void hway_map_pitch(unsigned ch) {
+    uint16 n = 2048u - (period[ch] & 0x07ffu);
+    if (!n) n = 1;
+    const unsigned chip = hway_ay_chip[ch], aych = hway_ay_chan[ch];
+    hway_write_register(chip, (uint8)(aych * 2u), (uint8)n);
+    hway_write_register(chip, (uint8)(aych * 2u + 1u), (uint8)((n >> 8) & 0x0f));
+
+    if (ch == 3 && (control & 0x80) && (noise_control & 0x10)) {
+        uint16 np = n >> 5; /* WS LFSR clocks 32x faster than wave fundamental. */
+        if (np < 1) np = 1;
+        if (np > 31) np = 31;
+        hway_write_register(chip, 6, (uint8)np);
+    }
+}
+
+static void hway_map_volume(unsigned ch) {
+    const unsigned chip = hway_ay_chip[ch], aych = hway_ay_chan[ch];
+    uint8 v = volume[ch];
+    uint8 level = ((v >> 4) > (v & 0x0f)) ? (v >> 4) : (v & 0x0f);
+    level >>= hway_master_shift();
+    if (!(control & (1u << ch))) level = 0;
+    /* Channel 2 voice mode is real PCM, not an AY tone. */
+    if (ch == 1 && (control & 0x20)) level = 0;
+    hway_write_register(chip, (uint8)(8u + aych), level & 0x0f);
+}
+
+static void hway_map_mode(unsigned ch) {
+    const unsigned chip = hway_ay_chip[ch], aych = hway_ay_chan[ch];
+    uint8 mix = hway_mixer_shadow[chip];
+    const uint8 tone_bit = (uint8)(1u << aych);
+    const uint8 noise_bit = (uint8)(1u << (3u + aych));
+
+    if (ch == 3 && (control & 0x80) && (noise_control & 0x10)) {
+        mix |= tone_bit;       /* noise only */
+        mix &= (uint8)~noise_bit;
+    } else {
+        mix &= (uint8)~tone_bit; /* AY square-wave approximation */
+        mix |= noise_bit;
+    }
+    if (chip) mix |= 0x80; /* AY #2 port B remains DAC output. */
+    hway_mixer_shadow[chip] = mix;
+    hway_write_register(chip, 7, mix);
+    hway_map_pitch(ch);
+    hway_map_volume(ch);
+}
+
+static void hway_map_all(void) {
+    for (unsigned ch = 0; ch < 4; ++ch) hway_map_mode(ch);
+}
+#endif
+
 static void __not_in_flash_func(emit_sample)(void) {
     uint32 left = 0, right = 0;
 
@@ -241,6 +309,10 @@ static void __not_in_flash_func(emit_sample)(void) {
             right += (voice_volume & 1) ? sample : (voice_volume & 2) ? half : 0;
             continue;
         }
+#ifdef HWAY
+        /* Normal wavetable/noise voices are produced by the physical AYs. */
+        continue;
+#endif
 
         const unsigned sample =
             (ch == 3 && (control & 0x80) && (noise_control & 0x10))
@@ -427,6 +499,7 @@ void ws_audio_set_enabled(int enabled) {
 #ifdef HWAY
 void ws_audio_set_hway_volume(unsigned volume) {
     hway_volume = volume <= 4 ? (uint8)volume : 4;
+    hway_map_all();
 }
 #endif
 
@@ -574,10 +647,17 @@ void ws_audio_port_write(uint32 port, uint8 value) {
             period[ch] = (period[ch] & 0x00ff) | ((value & 7) << 8);
         else
             period[ch] = (period[ch] & 0x0700) | value;
+#ifdef HWAY
+        hway_map_pitch(ch);
+#endif
         return;
     }
     if (port >= 0x88 && port <= 0x8b) {
-        volume[port - 0x88] = value;
+        const unsigned ch = port - 0x88;
+        volume[ch] = value;
+#ifdef HWAY
+        hway_map_volume(ch);
+#endif
         return;
     }
     switch (port) {
@@ -590,6 +670,9 @@ void ws_audio_port_write(uint32 port, uint8 value) {
         case 0x8e:
             if (value & 8) nreg = 0;
             noise_control = value & 0x17;
+#ifdef HWAY
+            hway_map_mode(3);
+#endif
             break;
         case 0x8f: sample_ram_pos = value; break;
         case 0x90:
@@ -600,6 +683,9 @@ void ws_audio_port_write(uint32 port, uint8 value) {
                 }
             }
             control = value;
+#ifdef HWAY
+            hway_map_all();
+#endif
             break;
         case 0x91: output_control = value & 0x0f; break;
         case 0x92: nreg = (nreg & 0x7f00) | value; break;
@@ -609,9 +695,21 @@ void ws_audio_port_write(uint32 port, uint8 value) {
     }
 }
 
+
+#ifdef HWAY
+void ws_audio_hway_sync(void) {
+    hway_mixer_shadow[0] = 0x38;
+    hway_mixer_shadow[1] = 0xb8;
+    hway_map_all();
+}
+#endif
+
 void ws_audio_snapshot_get(ws_audio_snapshot_t *s) {
  memcpy(s->period,period,sizeof(period)); memcpy(s->volume,volume,sizeof(volume)); s->voice_volume=voice_volume; s->sweep_step=sweep_step; s->sweep_value=sweep_value; s->noise_control=noise_control; s->control=control; s->output_control=output_control; s->sample_ram_pos=sample_ram_pos; memcpy(s->period_counter,period_counter,sizeof(period_counter)); memcpy(s->sample_pos,sample_pos,sizeof(sample_pos)); s->nreg=nreg; s->sweep_divider=sweep_divider; s->sweep_counter=sweep_counter; s->sample_counter=sample_counter; memcpy(s->dc_prev_in,dc_prev_in,sizeof(dc_prev_in)); memcpy(s->dc_prev_out,dc_prev_out,sizeof(dc_prev_out)); s->audio_pending_cycles=audio_pending_cycles; s->hyper_left=hyper_left; s->hyper_right=hyper_right; s->hyper_input=hyper_input; s->hyper_control=hyper_control; s->hyper_channel_control=hyper_channel_control; s->hyper_dma_left=hyper_dma_left; s->hyper_manual_left=hyper_manual_left; s->hyper_pending_left=hyper_pending_left; s->hyper_pending_right=hyper_pending_right; s->hyper_rate_counter=hyper_rate_counter; s->sound_dma_source=sound_dma_source; s->sound_dma_source_reload=sound_dma_source_reload; s->sound_dma_size=sound_dma_size; s->sound_dma_size_reload=sound_dma_size_reload; s->sound_dma_control=sound_dma_control; s->sound_dma_counter=sound_dma_counter;
 }
 void ws_audio_snapshot_set(const ws_audio_snapshot_t *s) {
  memcpy(period,s->period,sizeof(period)); memcpy(volume,s->volume,sizeof(volume)); voice_volume=s->voice_volume; sweep_step=s->sweep_step; sweep_value=s->sweep_value; noise_control=s->noise_control; control=s->control; output_control=s->output_control; sample_ram_pos=s->sample_ram_pos; memcpy(period_counter,s->period_counter,sizeof(period_counter)); memcpy(sample_pos,s->sample_pos,sizeof(sample_pos)); nreg=s->nreg; sweep_divider=s->sweep_divider; sweep_counter=s->sweep_counter; sample_counter=s->sample_counter; memcpy(dc_prev_in,s->dc_prev_in,sizeof(dc_prev_in)); memcpy(dc_prev_out,s->dc_prev_out,sizeof(dc_prev_out)); audio_pending_cycles=s->audio_pending_cycles; hyper_left=s->hyper_left; hyper_right=s->hyper_right; hyper_input=s->hyper_input; hyper_control=s->hyper_control; hyper_channel_control=s->hyper_channel_control; hyper_dma_left=s->hyper_dma_left; hyper_manual_left=s->hyper_manual_left; hyper_pending_left=s->hyper_pending_left; hyper_pending_right=s->hyper_pending_right; hyper_rate_counter=s->hyper_rate_counter; sound_dma_source=s->sound_dma_source; sound_dma_source_reload=s->sound_dma_source_reload; sound_dma_size=s->sound_dma_size; sound_dma_size_reload=s->sound_dma_size_reload; sound_dma_control=s->sound_dma_control; sound_dma_counter=s->sound_dma_counter; audio_cpu_clock=nec_get_clock(); pcm_frames=0;
+#ifdef HWAY
+ hway_map_all();
+#endif
 }

@@ -2,6 +2,7 @@
 #include "pico/stdlib.h"
 #include "pico/platform.h"
 #include "hardware/clocks.h"
+#include "hardware/pwm.h"
 
 /* Same physical HWAY/TurboSound serial bus used by pico-gamate and murm386:
  * two cascaded 74HC595s, latch=AUDIO_DATA_PIN, clock=AUDIO_CLOCK_PIN,
@@ -9,6 +10,7 @@
 #define HWAY_LATCH_PIN AUDIO_DATA_PIN
 #define HWAY_CLOCK_PIN AUDIO_CLOCK_PIN
 #define HWAY_DATA_PIN  (AUDIO_CLOCK_PIN + 1)
+#define CLK_AY_PIN      21
 
 #define AY_CS_SAA1099 (1u << 15)
 #define AY_ENABLE     (1u << 14)
@@ -30,6 +32,15 @@ static volatile uint32_t pcm_write_pos;
 static volatile uint32_t pcm_read_pos;
 static uint64_t pcm_next_us;
 static uint32_t pcm_frac;
+
+#define HWAY_REG_QUEUE_SIZE 256u
+#define HWAY_REG_QUEUE_MASK (HWAY_REG_QUEUE_SIZE - 1u)
+typedef struct { uint8_t chip, reg, value; } hway_reg_cmd_t;
+static hway_reg_cmd_t reg_queue[HWAY_REG_QUEUE_SIZE];
+static volatile uint32_t reg_write_pos;
+static volatile uint32_t reg_read_pos;
+/* R7 shadows. Chip 1 bit 7 must stay set because its port B is the PCM DAC. */
+static uint8_t ay_mixer[2] = { 0x38, 0xb8 };
 
 static inline void hway_wait_to_adjust(uint32_t wait_nops) {
     for (uint32_t i = 0; i < wait_nops; ++i)
@@ -91,9 +102,20 @@ static void __not_in_flash_func(write_data)(uint8_t value) {
 }
 
 void hway_write_register(unsigned chip, uint8_t reg, uint8_t value) {
-    select_chip(chip);
-    select_register(reg);
-    write_data(value);
+    chip &= 1u;
+    reg &= 0x0fu;
+    if (reg == 7) {
+        if (chip) value |= 0x80u;
+        ay_mixer[chip] = value;
+    }
+
+    /* Core0 never touches the physical 595 bus.  Register changes share the
+     * same core1 ownership model as PCM. */
+    const uint32_t write = __atomic_load_n(&reg_write_pos, __ATOMIC_RELAXED);
+    const uint32_t read = __atomic_load_n(&reg_read_pos, __ATOMIC_ACQUIRE);
+    if (write - read >= HWAY_REG_QUEUE_SIZE) return;
+    reg_queue[write & HWAY_REG_QUEUE_MASK] = (hway_reg_cmd_t){ (uint8_t)chip, reg, value };
+    __atomic_store_n(&reg_write_pos, write + 1u, __ATOMIC_RELEASE);
 }
 
 void hway_init(void) {
@@ -118,7 +140,20 @@ void hway_init(void) {
 
     /* PCM-only stage: exactly like murm386, no AY master clock is needed
      * to drive the asynchronous register bus and port-B DAC. */
+    /* 1.536 MHz makes AY tone period N exactly match WonderSwan's
+     * (2048 - divisor): 1.536 MHz/(16*N) == 96 kHz/N. */
+    gpio_set_function(CLK_AY_PIN, GPIO_FUNC_PWM);
+    pwm_config ay_clock = pwm_get_default_config();
+    pwm_config_set_wrap(&ay_clock, 1);
+    pwm_config_set_clkdiv(&ay_clock, (float)clock_get_hz(clk_sys) / 3072000.0f);
+    pwm_init(pwm_gpio_to_slice_num(CLK_AY_PIN), &ay_clock, true);
+    pwm_set_gpio_level(CLK_AY_PIN, 1);
+
     last_pcm_valid = false;
+    ay_mixer[0] = 0x38;
+    ay_mixer[1] = 0xb8;
+    __atomic_store_n(&reg_write_pos, 0, __ATOMIC_RELAXED);
+    __atomic_store_n(&reg_read_pos, 0, __ATOMIC_RELAXED);
     __atomic_store_n(&pcm_write_pos, 0, __ATOMIC_RELAXED);
     __atomic_store_n(&pcm_read_pos, 0, __ATOMIC_RELAXED);
     pcm_next_us = time_us_64();
@@ -138,6 +173,19 @@ void __not_in_flash_func(hway_write_pcm)(uint8_t sample) {
 }
 
 void __not_in_flash_func(hway_poll)(void) {
+    /* Apply all pending musical register changes before servicing the next
+     * DAC slot.  Only core1 executes hway_shift16(). */
+    for (;;) {
+        const uint32_t read = __atomic_load_n(&reg_read_pos, __ATOMIC_RELAXED);
+        const uint32_t write = __atomic_load_n(&reg_write_pos, __ATOMIC_ACQUIRE);
+        if (read == write) break;
+        const hway_reg_cmd_t cmd = reg_queue[read & HWAY_REG_QUEUE_MASK];
+        __atomic_store_n(&reg_read_pos, read + 1u, __ATOMIC_RELEASE);
+        select_chip(cmd.chip);
+        select_register(cmd.reg);
+        write_data(cmd.value);
+    }
+
     uint64_t now = time_us_64();
     while ((int64_t)(now - pcm_next_us) >= 0) {
         /* Exact 24 kHz pacing: 41 + 2/3 us per sample. */
@@ -167,7 +215,7 @@ void __not_in_flash_func(hway_poll)(void) {
 
         select_chip(1);
         select_register(7);
-        write_data(0x80);
+        write_data(ay_mixer[1]);
         select_register(15);
         write_data(sample);
 

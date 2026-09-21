@@ -22,6 +22,7 @@ void ws_audio_sync(void);
 void ws_audio_set_enabled(int enabled);
 #ifdef HWAY
 void ws_audio_set_hway_volume(unsigned volume);
+void ws_audio_hway_sync(void);
 #endif
 void ws_audio_set_rate_shift(unsigned shift);
 uint8 ws_audio_hyper_port_read(uint32 port);

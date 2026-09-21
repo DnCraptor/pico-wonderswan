@@ -1726,6 +1726,7 @@ void __time_critical_func(render_core)() {
 
 #ifdef HWAY
     hway_init();
+    ws_audio_hway_sync();
 #endif
 
     const auto buffer = (uint8_t *) SCREEN1;
