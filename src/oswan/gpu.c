@@ -91,6 +91,7 @@ uint8 ws_gpu_scanline = 0;
 /* WonderSwan latches the sprite table near the end of the visible frame. */
 static uint32 ws_spriteTable[2][0x80];
 static uint8 ws_spriteCountCache[2];
+static uint8 ws_spritePriority0Count[2];
 static uint8 ws_spriteTableActive;
 __aligned(4) int16 ws_palette[16 * 4];
 __aligned(4) int8 ws_paletteColors[8];
@@ -358,6 +359,7 @@ void ws_gpu_reset(void) {
     ws_gpu_scanline = 0;
     memset(ws_spriteTable, 0, sizeof(ws_spriteTable));
     ws_spriteCountCache[0] = ws_spriteCountCache[1] = 0;
+    ws_spritePriority0Count[0] = ws_spritePriority0Count[1] = 0;
     ws_spriteTableActive = 0;
     ws_gpu_changeVideoMode(2);
 }
@@ -373,6 +375,25 @@ void ws_gpu_reset(void) {
 //
 //
 ////////////////////////////////////////////////////////////////////////////////
+static uint8 ws_gpu_partitionSprites(uint32 *dst, const uint32 *src, uint8 count) {
+    uint8 out = 0;
+
+    /* Keep the original order inside each priority class. renderScanline()
+       walks each range backwards, so sprite-over-sprite priority is unchanged. */
+    for (uint8 i = 0; i < count; ++i) {
+        const uint32 spr = src[i];
+        if (!(spr & 0x2000))
+            dst[out++] = spr;
+    }
+    const uint8 priority0Count = out;
+    for (uint8 i = 0; i < count; ++i) {
+        const uint32 spr = src[i];
+        if (spr & 0x2000)
+            dst[out++] = spr;
+    }
+    return priority0Count;
+}
+
 void ws_gpu_latchSprites(void) {
     const uint8 next = ws_spriteTableActive ^ 1u;
     uint8 count = ws_ioRam[0x06];
@@ -383,7 +404,10 @@ void ws_gpu_latchSprites(void) {
     if (count) {
         const uint32 base = ((uint32) ws_ioRam[0x04]) << 9;
         const uint32 start = ((uint32) ws_ioRam[0x05]) << 2;
-        memcpy(ws_spriteTable[next], internalRam + base + start, ((uint32) count) << 2);
+        const uint32 *src = (const uint32 *)(internalRam + base + start);
+        ws_spritePriority0Count[next] = ws_gpu_partitionSprites(ws_spriteTable[next], src, count);
+    } else {
+        ws_spritePriority0Count[next] = 0;
     }
 }
 
@@ -894,13 +918,13 @@ void ws_gpu_renderScanline(uint8 *framebuffer) {
         const int ws_sprWindow_x1 = ws_ioRam[0x0e];
         const int ws_sprWindow_y1 = ws_ioRam[0x0f];
         const bool spriteWindowEnabled = (ws_ioRam[0x00] & 0x08) != 0;
-        const int spriteCount = ws_spriteCountCache[ws_spriteTableActive];
+        const int spriteCount = ws_spritePriority0Count[ws_spriteTableActive];
         const uint32 *ws_sprRamBase = ws_spriteTable[ws_spriteTableActive];
 
         for (int i = spriteCount; i > 0; i--) {
             const uint32 spr = ws_sprRamBase[i - 1];
 
-            if (!(spr & 0x2000)) {
+            {
                 int x = (spr >> 24) & 0xff;
                 int y = (spr >> 16) & 0xff;
                 if (x >= 249) x -= 256;
@@ -1461,13 +1485,14 @@ void ws_gpu_renderScanline(uint8 *framebuffer) {
         const int ws_sprWindow_x1 = ws_ioRam[0x0e];
         const int ws_sprWindow_y1 = ws_ioRam[0x0f];
         const bool spriteWindowEnabled = (ws_ioRam[0x00] & 0x08) != 0;
+        const int spriteStart = ws_spritePriority0Count[ws_spriteTableActive];
         const int spriteCount = ws_spriteCountCache[ws_spriteTableActive];
         const uint32 *ws_sprRamBase = ws_spriteTable[ws_spriteTableActive];
 
-        for (int i = spriteCount; i > 0; i--) {
+        for (int i = spriteCount; i > spriteStart; i--) {
             const uint32 spr = ws_sprRamBase[i - 1];
 
-            if ((spr & 0x2000)) {
+            {
                 int x = (spr >> 24) & 0xff;
                 int y = (spr >> 16) & 0xff;
                 if (x >= 249) x -= 256;
@@ -1644,7 +1669,13 @@ void ws_gpu_snapshot_get(ws_gpu_snapshot_t *state) {
 }
 void ws_gpu_snapshot_set(const ws_gpu_snapshot_t *state) {
     ws_gpu_scanline = state->scanline; ws_gpu_operatingInColor = state->operating_in_color; ws_videoMode = state->video_mode;
-    memcpy(ws_spriteTable, state->sprite_table, sizeof(ws_spriteTable)); memcpy(ws_spriteCountCache, state->sprite_count_cache, sizeof(ws_spriteCountCache));
+    memcpy(ws_spriteCountCache, state->sprite_count_cache, sizeof(ws_spriteCountCache));
+    for (unsigned table = 0; table < 2; ++table) {
+        uint8 count = ws_spriteCountCache[table];
+        if (count > 0x80) count = 0x80;
+        ws_spriteCountCache[table] = count;
+        ws_spritePriority0Count[table] = ws_gpu_partitionSprites(ws_spriteTable[table], state->sprite_table[table], count);
+    }
     ws_spriteTableActive = state->sprite_table_active;
     memcpy(ws_palette, state->palette, sizeof(ws_palette)); memcpy(ws_paletteColors, state->palette_colors, sizeof(ws_paletteColors));
     memcpy(wsc_palette, state->color_palette, sizeof(wsc_palette));
