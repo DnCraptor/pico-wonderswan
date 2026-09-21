@@ -109,6 +109,10 @@ static bool keyboard_1 = false, keyboard_2 = false, keyboard_3 = false, keyboard
 static bool keyboard_o = false, keyboard_p = false, keyboard_l = false, keyboard_semicolon = false;
 static bool keyboard_9 = false, keyboard_0 = false;
 
+/* Palette editor owns hexadecimal key presses while it is open. */
+static volatile bool palette_editor_active = false;
+static volatile int8_t palette_hex_key = -1;
+
 static bool portrait_enabled() {
     bool portrait;
     switch (rotation_mode) {
@@ -178,6 +182,30 @@ void process_kbd_report(hid_keyboard_report_t const* report, hid_keyboard_report
     keyboard_bits.b = isInReport(report, HID_KEY_Z);
     keyboard_bits.a = isInReport(report, HID_KEY_X);
 
+    if (palette_editor_active) {
+        int8_t hex = -1;
+#define PALETTE_HEX_KEY(key, value) \
+        if (hex < 0 && isInReport(report, key) && !isInReport(prev_report, key)) hex = value
+        PALETTE_HEX_KEY(HID_KEY_0, 0);
+        PALETTE_HEX_KEY(HID_KEY_1, 1);
+        PALETTE_HEX_KEY(HID_KEY_2, 2);
+        PALETTE_HEX_KEY(HID_KEY_3, 3);
+        PALETTE_HEX_KEY(HID_KEY_4, 4);
+        PALETTE_HEX_KEY(HID_KEY_5, 5);
+        PALETTE_HEX_KEY(HID_KEY_6, 6);
+        PALETTE_HEX_KEY(HID_KEY_7, 7);
+        PALETTE_HEX_KEY(HID_KEY_8, 8);
+        PALETTE_HEX_KEY(HID_KEY_9, 9);
+        PALETTE_HEX_KEY(HID_KEY_A, 10);
+        PALETTE_HEX_KEY(HID_KEY_B, 11);
+        PALETTE_HEX_KEY(HID_KEY_C, 12);
+        PALETTE_HEX_KEY(HID_KEY_D, 13);
+        PALETTE_HEX_KEY(HID_KEY_E, 14);
+        PALETTE_HEX_KEY(HID_KEY_F, 15);
+#undef PALETTE_HEX_KEY
+        if (hex >= 0) palette_hex_key = hex;
+    }
+
     keyboard_o = isInReport(report, HID_KEY_O);
     keyboard_p = isInReport(report, HID_KEY_P);
     keyboard_l = isInReport(report, HID_KEY_L);
@@ -196,8 +224,10 @@ void process_kbd_report(hid_keyboard_report_t const* report, hid_keyboard_report
 
     keyboard_bits.up = b7 || b9 || isInReport(report, HID_KEY_ARROW_UP) || isInReport(report, HID_KEY_W) || isInReport(report, HID_KEY_KEYPAD_8);
     keyboard_bits.down = b1 || b3 || isInReport(report, HID_KEY_ARROW_DOWN) || isInReport(report, HID_KEY_S) || isInReport(report, HID_KEY_KEYPAD_2) || isInReport(report, HID_KEY_KEYPAD_5);
-    keyboard_bits.left = b7 || b1 || isInReport(report, HID_KEY_ARROW_LEFT) || isInReport(report, HID_KEY_A) || isInReport(report, HID_KEY_KEYPAD_4);
-    keyboard_bits.right = b9 || b3 || isInReport(report, HID_KEY_ARROW_RIGHT)  || isInReport(report, HID_KEY_D) || isInReport(report, HID_KEY_KEYPAD_6);
+    keyboard_bits.left = b7 || b1 || isInReport(report, HID_KEY_ARROW_LEFT) ||
+                         (!palette_editor_active && isInReport(report, HID_KEY_A)) || isInReport(report, HID_KEY_KEYPAD_4);
+    keyboard_bits.right = b9 || b3 || isInReport(report, HID_KEY_ARROW_RIGHT) ||
+                          (!palette_editor_active && isInReport(report, HID_KEY_D)) || isInReport(report, HID_KEY_KEYPAD_6);
 
     altPressed = isInReport(report, HID_KEY_ALT_LEFT) || isInReport(report, HID_KEY_ALT_RIGHT);
     ctrlPressed = isInReport(report, HID_KEY_CONTROL_LEFT) || isInReport(report, HID_KEY_CONTROL_RIGHT);
@@ -1348,7 +1378,10 @@ static bool show_current_palettes(void) {
     uint8_t *buffer = (uint8_t *)SCREEN3;
     unsigned selected = 0;
     int edit_channel = -1;
+    int hex_digit = -1;
 
+    palette_hex_key = -1;
+    palette_editor_active = true;
     graphics_set_buffer(buffer, 224, 144);
     graphics_set_mode(GRAPHICSMODE_DEFAULT);
     palette_preview_apply_palette();
@@ -1381,7 +1414,24 @@ static bool show_current_palettes(void) {
         bool redraw = false;
         bool palette_changed = false;
 
-        if (edit_channel < 0) {
+        const int8_t typed_hex = palette_hex_key;
+        if (typed_hex >= 0) {
+            palette_hex_key = -1;
+            if (hex_digit < 0) hex_digit = 0;
+            const unsigned shift = (unsigned)(5 - hex_digit) * 4u;
+            uint32_t rgb = ws_shades[selected] & 0x00ffffffu;
+            rgb = (rgb & ~(0x0fu << shift)) | ((uint32_t)typed_hex << shift);
+            ws_shades[selected] = rgb;
+            palette_changed = true;
+            redraw = true;
+
+            if (++hex_digit >= 6) {
+                hex_digit = -1;
+                edit_channel = -1;
+            } else {
+                edit_channel = hex_digit >> 1;
+            }
+        } else if (edit_channel < 0) {
             if (left) {
                 selected = (selected & ~3u) | ((selected - 1u) & 3u);
                 redraw = true;
@@ -1396,6 +1446,7 @@ static bool show_current_palettes(void) {
                 redraw = true;
             } else if (accept) {
                 edit_channel = 0;
+                hex_digit = -1;
                 redraw = true;
             } else if (back || close) {
                 palette_preview_apply_palette();
@@ -1405,6 +1456,8 @@ static bool show_current_palettes(void) {
                     capture_global_palette();
                     save_config();
                 }
+                palette_editor_active = false;
+                palette_hex_key = -1;
                 graphics_set_mode(GRAPHICSMODE_DEFAULT);
                 return true;
             }
@@ -1434,6 +1487,7 @@ static bool show_current_palettes(void) {
                    edge-triggered a held/bouncing contact cannot immediately
                    toggle the mode a second time. */
                 edit_channel = -1;
+                hex_digit = -1;
                 redraw = true;
             } else if (close) {
                 palette_preview_apply_palette();
@@ -1443,6 +1497,8 @@ static bool show_current_palettes(void) {
                     capture_global_palette();
                     save_config();
                 }
+                palette_editor_active = false;
+                palette_hex_key = -1;
                 graphics_set_mode(GRAPHICSMODE_DEFAULT);
                 return true;
             }
@@ -1501,7 +1557,7 @@ const MenuItem menu_items[] = {
         { "Demo game time: %s", ARRAY, &demo_duration, nullptr, 7, { "15 sec", "30 sec", "45 sec", "1 min ", "2 min ", "3 min ", "5 min ", "10 min" } },
         { "Press START / Enter to apply", NONE },
         { "Start Demo", START_DEMO },
-        { "Show current palettes", SHOW_PALETTES },
+        { "Current palettes", SHOW_PALETTES },
         { "Save colors for this game", GAME_PALETTE, nullptr, &game_palette_action },
         { "Default", DEFAULTS },
         { "Reset to ROM select", ROM_SELECT },
