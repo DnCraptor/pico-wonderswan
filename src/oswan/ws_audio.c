@@ -160,6 +160,22 @@ static void __not_in_flash_func(sound_dma_tick)(void) {
     }
 }
 
+/* Stateless soft clipper: linear below KNEE, then smoothly saturates toward
+   +/-CEIL so simultaneous loud voices round off instead of hard-clipping to
+   flat tops. No gain state -> no pumping and no squashing of quiet material
+   (unlike a peak limiter, which flattens every percussion transient to the
+   ceiling). out_excess = H*e/(e+H) asymptotes to the remaining headroom H. */
+static int32 __not_in_flash_func(soft_clip)(int32 x) {
+    const int32 KNEE = 22000;
+    const int32 CEIL = 32000;
+    const int32 H = CEIL - KNEE;
+    const int32 a = x < 0 ? -x : x;
+    if (a <= KNEE) return x;
+    const int32 e = a - KNEE;
+    const int32 oe = (int32)(((int64_t)H * e) / (e + H));
+    return x < 0 ? -(KNEE + oe) : (KNEE + oe);
+}
+
 static int16 clamp16(int32 v) {
     if (v > 32767) return 32767;
     if (v < -32768) return -32768;
@@ -340,31 +356,10 @@ static void __not_in_flash_func(emit_sample)(void) {
     }
 
 #ifndef HWAY
-    /* Dynamic peak limiter (auto gain). Summing 4 voices + Hyper Voice can go
-       well past the 16-bit output range; clamp16 alone would hard-clip the
-       peaks (audible amplitude crop). Instead pull the whole stereo mix down by
-       one shared Q16 gain: drop it immediately when a sample would exceed the
-       ceiling (instant attack, no clip), then let it creep back toward unity
-       between peaks (slow release, no pumping). L and R share the gain so the
-       stereo image is preserved. */
-    {
-        static int32 agc_gain = 65536;          /* Q16.16, 1.0 */
-        const int32 LIMIT = 30000;              /* a little headroom under 32767 */
-        const int32 al = out_left  < 0 ? -out_left  : out_left;
-        const int32 ar = out_right < 0 ? -out_right : out_right;
-        const int32 peak = al > ar ? al : ar;
-        if (peak > LIMIT) {
-            const int32 target = (int32)(((int64_t)LIMIT << 16) / peak);
-            if (target < agc_gain) agc_gain = target;           /* attack */
-        } else if (agc_gain < 65536) {
-            agc_gain += (65536 - agc_gain) >> 11;                /* release (~85 ms) */
-            if (agc_gain > 65536) agc_gain = 65536;
-        }
-        if (agc_gain != 65536) {
-            out_left  = (int32)(((int64_t)out_left  * agc_gain) >> 16);
-            out_right = (int32)(((int64_t)out_right * agc_gain) >> 16);
-        }
-    }
+    /* Smoothly round peaks instead of hard-clipping / limiter-squashing the
+       simultaneous-voice sum (see soft_clip above). */
+    out_left  = soft_clip(out_left);
+    out_right = soft_clip(out_right);
 
     const int16 sample_left = clamp16(out_left);
     const int16 sample_right = clamp16(out_right);
