@@ -702,6 +702,16 @@ void ws_audio_hway_sync(void) {
     hway_mixer_shadow[1] = 0xb8;
     hway_map_all();
 }
+
+void ws_audio_hway_silence(void) {
+    /* Silence only the AY tone/noise generators. AY #2 port B remains DAC. */
+    hway_write_register(0, 8, 0);
+    hway_write_register(0, 9, 0);
+    hway_write_register(0, 10, 0);
+    hway_write_register(1, 8, 0);
+    hway_write_register(1, 9, 0);
+    hway_write_register(1, 10, 0);
+}
 #endif
 
 void ws_audio_snapshot_get(ws_audio_snapshot_t *s) {

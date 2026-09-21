@@ -317,6 +317,10 @@ bool filebrowser_loadfile(const char pathname[256]) {
     UINT bytes_read = 0;
     FIL file;
 
+#ifdef HWAY
+    ws_audio_hway_silence();
+#endif
+
     constexpr int window_y = (TEXTMODE_ROWS - 5) / 2;
     constexpr int window_x = (TEXTMODE_COLS - 43) / 2;
 
@@ -1548,6 +1552,9 @@ static bool reset_config_and_offer_reboot(void) {
 }
 
 static void menu(bool game_loaded) {
+#ifdef HWAY
+    ws_audio_hway_silence();
+#endif
     bool exit = false;
     bool suppress_config_save = false;
     memset((uint8_t*)SCREEN1, 0, 144 * 224);
