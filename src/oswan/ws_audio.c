@@ -416,7 +416,7 @@ void ws_audio_reset(void) {
     sweep_divider = 8192;
     sweep_counter = 1;
     sample_counter = (WS_AUDIO_CLOCK / WS_AUDIO_RATE) << audio_rate_shift;
-    audio_cpu_clock = nec_get_clock();
+    audio_cpu_clock = nec_get_scheduler_clock();
     memset(dc_prev_in, 0, sizeof(dc_prev_in));
     memset(dc_prev_out, 0, sizeof(dc_prev_out));
     pcm_frames = 0;
@@ -501,7 +501,7 @@ void __not_in_flash_func(ws_audio_sync)(void) {
     i2s_dma_pump(&i2s_config);
 #endif
 
-    const uint32 now = nec_get_clock();
+    const uint32 now = nec_get_scheduler_clock();
     const uint32 elapsed = now - audio_cpu_clock;
     if (elapsed) {
         ws_audio_process(elapsed);
@@ -513,7 +513,7 @@ void ws_audio_set_enabled(int enabled) {
     const bool new_enabled = enabled != 0;
     if (audio_enabled == new_enabled) return;
     audio_enabled = new_enabled;
-    audio_cpu_clock = nec_get_clock();
+    audio_cpu_clock = nec_get_scheduler_clock();
     if (!audio_enabled) {
         pcm_frames = 0;
 #ifdef HWAY
@@ -744,7 +744,7 @@ void ws_audio_snapshot_get(ws_audio_snapshot_t *s) {
  memcpy(s->period,period,sizeof(period)); memcpy(s->volume,volume,sizeof(volume)); s->voice_volume=voice_volume; s->sweep_step=sweep_step; s->sweep_value=sweep_value; s->noise_control=noise_control; s->control=control; s->output_control=output_control; s->sample_ram_pos=sample_ram_pos; memcpy(s->period_counter,period_counter,sizeof(period_counter)); memcpy(s->sample_pos,sample_pos,sizeof(sample_pos)); s->nreg=nreg; s->sweep_divider=sweep_divider; s->sweep_counter=sweep_counter; s->sample_counter=sample_counter; memcpy(s->dc_prev_in,dc_prev_in,sizeof(dc_prev_in)); memcpy(s->dc_prev_out,dc_prev_out,sizeof(dc_prev_out)); s->audio_pending_cycles=audio_pending_cycles; s->hyper_left=hyper_left; s->hyper_right=hyper_right; s->hyper_input=hyper_input; s->hyper_control=hyper_control; s->hyper_channel_control=hyper_channel_control; s->hyper_dma_left=hyper_dma_left; s->hyper_manual_left=hyper_manual_left; s->hyper_pending_left=hyper_pending_left; s->hyper_pending_right=hyper_pending_right; s->hyper_rate_counter=hyper_rate_counter; s->sound_dma_source=sound_dma_source; s->sound_dma_source_reload=sound_dma_source_reload; s->sound_dma_size=sound_dma_size; s->sound_dma_size_reload=sound_dma_size_reload; s->sound_dma_control=sound_dma_control; s->sound_dma_counter=sound_dma_counter;
 }
 void ws_audio_snapshot_set(const ws_audio_snapshot_t *s) {
- memcpy(period,s->period,sizeof(period)); memcpy(volume,s->volume,sizeof(volume)); voice_volume=s->voice_volume; sweep_step=s->sweep_step; sweep_value=s->sweep_value; noise_control=s->noise_control; control=s->control; output_control=s->output_control; sample_ram_pos=s->sample_ram_pos; memcpy(period_counter,s->period_counter,sizeof(period_counter)); memcpy(sample_pos,s->sample_pos,sizeof(sample_pos)); nreg=s->nreg; sweep_divider=s->sweep_divider; sweep_counter=s->sweep_counter; sample_counter=s->sample_counter; memcpy(dc_prev_in,s->dc_prev_in,sizeof(dc_prev_in)); memcpy(dc_prev_out,s->dc_prev_out,sizeof(dc_prev_out)); audio_pending_cycles=s->audio_pending_cycles; hyper_left=s->hyper_left; hyper_right=s->hyper_right; hyper_input=s->hyper_input; hyper_control=s->hyper_control; hyper_channel_control=s->hyper_channel_control; hyper_dma_left=s->hyper_dma_left; hyper_manual_left=s->hyper_manual_left; hyper_pending_left=s->hyper_pending_left; hyper_pending_right=s->hyper_pending_right; hyper_rate_counter=s->hyper_rate_counter; sound_dma_source=s->sound_dma_source; sound_dma_source_reload=s->sound_dma_source_reload; sound_dma_size=s->sound_dma_size; sound_dma_size_reload=s->sound_dma_size_reload; sound_dma_control=s->sound_dma_control; sound_dma_counter=s->sound_dma_counter; audio_cpu_clock=nec_get_clock(); pcm_frames=0;
+ memcpy(period,s->period,sizeof(period)); memcpy(volume,s->volume,sizeof(volume)); voice_volume=s->voice_volume; sweep_step=s->sweep_step; sweep_value=s->sweep_value; noise_control=s->noise_control; control=s->control; output_control=s->output_control; sample_ram_pos=s->sample_ram_pos; memcpy(period_counter,s->period_counter,sizeof(period_counter)); memcpy(sample_pos,s->sample_pos,sizeof(sample_pos)); nreg=s->nreg; sweep_divider=s->sweep_divider; sweep_counter=s->sweep_counter; sample_counter=s->sample_counter; memcpy(dc_prev_in,s->dc_prev_in,sizeof(dc_prev_in)); memcpy(dc_prev_out,s->dc_prev_out,sizeof(dc_prev_out)); audio_pending_cycles=s->audio_pending_cycles; hyper_left=s->hyper_left; hyper_right=s->hyper_right; hyper_input=s->hyper_input; hyper_control=s->hyper_control; hyper_channel_control=s->hyper_channel_control; hyper_dma_left=s->hyper_dma_left; hyper_manual_left=s->hyper_manual_left; hyper_pending_left=s->hyper_pending_left; hyper_pending_right=s->hyper_pending_right; hyper_rate_counter=s->hyper_rate_counter; sound_dma_source=s->sound_dma_source; sound_dma_source_reload=s->sound_dma_source_reload; sound_dma_size=s->sound_dma_size; sound_dma_size_reload=s->sound_dma_size_reload; sound_dma_control=s->sound_dma_control; sound_dma_counter=s->sound_dma_counter; audio_cpu_clock=nec_get_scheduler_clock(); pcm_frames=0;
 #ifdef HWAY
  hway_map_all();
 #endif

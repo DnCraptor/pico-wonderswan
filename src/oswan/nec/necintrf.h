@@ -61,6 +61,7 @@ extern unsigned v33_dasm(char *buffer, unsigned pc);
 void nec_set_reg(int,unsigned);
 int nec_execute(int cycles);
 uint32_t nec_get_clock(void);
+uint32_t nec_get_scheduler_clock(void);
 unsigned nec_get_reg(int regnum);
 void nec_reset (void *param);
 int nec_int(uint32_t wektor);

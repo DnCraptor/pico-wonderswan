@@ -72,6 +72,12 @@ typedef struct
 int nec_ICount;
 #if 1
 uint32_t nec_TotalClock = 0;
+/* Monotonic scheduler-scale clock: one tick per cycle consumed from
+ * nec_ICount. Unlike nec_TotalClock this is the physical 3.072 MHz time
+ * base used by WonderSwan peripherals. Do not reset it in nec_reset():
+ * ws_audio_reset() runs before nec_reset(), so this clock must remain
+ * monotonic across a guest CPU reset just like nec_TotalClock does. */
+static uint32_t nec_SchedulerClock = 0;
 /* Most V30MZ cycles historically contributed twice to nec_TotalClock: once
  * in CLK* and once in nec_execute().  Keep that externally visible clock
  * scale, but account it once per instruction instead of writing the global
@@ -989,7 +995,9 @@ int __not_in_flash_func(nec_execute)(int cycles)
 		/* Normal CLK* cycles used to be counted twice.  Cycles consumed by
 		 * branch/idle/HLT fast paths were counted only by this outer path;
 		 * their negative correction preserves that exact clock scale. */
-		nec_TotalClock += (uint32_t)(2 * (count_before - nec_ICount)
+		const uint32_t scheduler_elapsed = (uint32_t)(count_before - nec_ICount);
+		nec_SchedulerClock += scheduler_elapsed;
+		nec_TotalClock += (uint32_t)(2 * scheduler_elapsed
 		                                  + (nec_clock_correction - correction_before));
 		nec_execute_base_clock = nec_TotalClock;
 		nec_execute_start_icount = nec_ICount;
@@ -1012,5 +1020,13 @@ uint32_t __not_in_flash_func(nec_get_clock)(void)
 		                  + nec_clock_correction);
 	}
 	return nec_TotalClock;
+}
+
+uint32_t __not_in_flash_func(nec_get_scheduler_clock)(void)
+{
+	if (nec_execute_active)
+		return nec_SchedulerClock
+		     + (uint32_t)(nec_execute_start_icount - nec_ICount);
+	return nec_SchedulerClock;
 }
 #endif
