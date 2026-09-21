@@ -23,6 +23,9 @@
 extern "C" {
 #include "ws.h"
 #include "ws_audio.h"
+#ifdef HWAY
+#include "hway/ay_hway.h"
+#endif
 #include "io.h"
 #include "gpu.h"
 #include "memory.h"
@@ -766,7 +769,9 @@ static bool __no_inline_not_in_flash_func(set_target_sys_clock)(uint32_t target_
 }
 
 static void reclock_drivers(void) {
+#ifndef HWAY
     i2s_reclock(&i2s_config);
+#endif
     graphics_reclock();
     ps2kbd.reclock();
     nespad_reclock(clock_get_hz(clk_sys) / 1000);
@@ -973,7 +978,11 @@ static bool apply_audio_volume() {
     ws_audio_set_enabled(audio_volume != 0);
     if (audio_volume != 0) {
         static const uint8_t attenuation[] = { 0, 3, 2, 1, 0 };
+#ifndef HWAY
         i2s_volume(&i2s_config, attenuation[audio_volume]);
+#else
+        ws_audio_set_hway_volume(audio_volume);
+#endif
     }
     return false;
 }
@@ -1700,11 +1709,13 @@ static void menu(bool game_loaded) {
 void __time_critical_func(render_core)() {
     flash_safe_execute_core_init();
 
+#ifndef HWAY
     i2s_config = i2s_get_default_config();
     i2s_config.sample_freq = AUDIO_SAMPLE_RATE;
     i2s_config.dma_trans_count = 256;
     i2s_volume(&i2s_config, 0);
     i2s_init(&i2s_config);
+#endif
     apply_audio_volume();
     apply_audio_rate();
 
@@ -1712,6 +1723,10 @@ void __time_critical_func(render_core)() {
     nespad_begin(clock_get_hz(clk_sys) / 1000, NES_GPIO_CLK, NES_GPIO_DATA, NES_GPIO_LAT);
 
     graphics_init();
+
+#ifdef HWAY
+    hway_init();
+#endif
 
     const auto buffer = (uint8_t *) SCREEN1;
     graphics_set_buffer(buffer, 224, 144);
@@ -2032,8 +2047,13 @@ int main() {
                 buffer = (uint8_t*)SCREEN1;
             }
 
-            while ((int64_t)(time_us_64() - next_ws_frame) < 0)
+            while ((int64_t)(time_us_64() - next_ws_frame) < 0) {
+#ifndef HWAY
                 i2s_dma_pump(&i2s_config);   // feed audio DMA while pacing the frame
+#else
+                tight_loop_contents();
+#endif
+            }
             next_ws_frame += 13250;
             // Do not accumulate a large delay after menus or other long pauses.
             const uint64_t now = time_us_64();

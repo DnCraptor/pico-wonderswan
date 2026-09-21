@@ -4,6 +4,9 @@
 #include "memory.h"
 #include "audio.h"
 #include "nec/necintrf.h"
+#ifdef HWAY
+#include "hway/ay_hway.h"
+#endif
 
 #define WS_AUDIO_CLOCK 3072000u
 #define WS_AUDIO_RATE  24000u
@@ -34,6 +37,9 @@ static int16 pcm[WS_AUDIO_BLOCK * 2];
 static uint16 pcm_frames;
 static uint8 audio_rate_shift;
 static uint32 audio_pending_cycles;
+#ifdef HWAY
+static uint8 hway_volume = 4;
+#endif
 
 /* WonderSwan Color Hyper Voice (ports 64h..6Bh).  The fifth channel is a
  * signed 16-bit stereo path mixed after the four legacy channels. */
@@ -131,8 +137,11 @@ static void __not_in_flash_func(sound_dma_tick)(void) {
         return;
     }
     const uint8 sample = cpu_readmem20(sound_dma_source);
-    if (sound_dma_control & 0x10) hyper_latch_input(sample, 1);
-    else ws_audio_port_write(0x89, sample);
+    if (sound_dma_control & 0x10) {
+        hyper_latch_input(sample, 1);
+    } else {
+        ws_audio_port_write(0x89, sample);
+    }
     sound_dma_size--;
     sound_dma_source = (sound_dma_source + ((sound_dma_control & 0x40) ? 0xfffffu : 1u)) & 0xfffffu;
     if (!sound_dma_size) {
@@ -253,6 +262,7 @@ static void __not_in_flash_func(emit_sample)(void) {
         out_right += hyper_right;
     }
 
+#ifndef HWAY
     const int16 sample_left = clamp16(out_left);
     const int16 sample_right = clamp16(out_right);
     const unsigned repeat = 1u << audio_rate_shift;
@@ -267,6 +277,27 @@ static void __not_in_flash_func(emit_sample)(void) {
             pcm_frames = 0;
         }
     }
+#else
+    /* Match murm386 HWAY: the hardware DAC is the final PCM backend.  Feed it
+     * continuously at the emulated audio sample clock, after the normal WS
+     * mixer, instead of trying to infer PCM timing from guest port writes. */
+    const int32 sample_left = clamp16(out_left);
+    const int32 sample_right = clamp16(out_right);
+    int32 mono = (sample_left + sample_right) / 2;
+    /* The WS legacy mixer is about +/-15360 at full scale after DC removal.
+     * Expand that to the full signed 16-bit range before feeding the 8-bit
+     * external DAC, then apply the same 12/25/50/100% volume steps. */
+    int32 scaled = (mono * 32767) / 15360;
+    if (scaled < -32768) scaled = -32768;
+    if (scaled >  32767) scaled =  32767;
+    static const uint8 hway_gain_shift[5] = { 0, 3, 2, 1, 0 };
+    scaled >>= hway_gain_shift[hway_volume];
+    int32 dac = (scaled + 32768) >> 8;
+    if (dac < 0) dac = 0;
+    if (dac > 255) dac = 255;
+    if (audio_enabled)
+        hway_write_pcm((uint8)dac);
+#endif
 }
 
 void ws_audio_init(void) {
@@ -367,7 +398,9 @@ void __not_in_flash_func(ws_audio_sync)(void) {
     /* Keep the audio DMA continuously fed. i2s_dma_write() alone runs only
      * ~1.25x per frame (one 256-sample block), far less often than the PIO
      * FIFO drains, so pump here too (called ~twice per scanline). */
+#ifndef HWAY
     i2s_dma_pump(&i2s_config);
+#endif
 
     const uint32 now = nec_get_clock();
     const uint32 elapsed = now - audio_cpu_clock;
@@ -382,9 +415,19 @@ void ws_audio_set_enabled(int enabled) {
     if (audio_enabled == new_enabled) return;
     audio_enabled = new_enabled;
     audio_cpu_clock = nec_get_clock();
-    if (!audio_enabled)
+    if (!audio_enabled) {
         pcm_frames = 0;
+#ifdef HWAY
+        hway_write_pcm(0);
+#endif
+    }
 }
+
+#ifdef HWAY
+void ws_audio_set_hway_volume(unsigned volume) {
+    hway_volume = volume <= 4 ? (uint8)volume : 4;
+}
+#endif
 
 void ws_audio_set_rate_shift(unsigned shift) {
     if (shift > 3) shift = 3;
