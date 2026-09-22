@@ -1018,12 +1018,9 @@ static bool __time_critical_func(video_timer_callbackTV)(repeating_timer_t* rt) 
                                     *output_buffer8++ = c_4[i % 4];
                                 }
                             } else {
-                                //для 8-битного буфера
-                                uint8_t* input_buffer8 = input_buffer + (y-graphics_buffer.shift_y) * (16 + 320 + 16);
-
-                                if (graphics_buffer.width == 320) {
-                                    input_buffer8 += 16;
-                                }
+                                //для 8-битного буфера: шаг строки = реальная
+                                //ширина кадра (у WonderSwan 224), а не хардкод 320.
+                                uint8_t* input_buffer8 = input_buffer + (y-graphics_buffer.shift_y) * graphics_buffer.width;
                                 // todo bgcolor
                                 uint8_t color = graphics_buffer.shift_x ? 0 : *input_buffer8++;
                                 uint32_t cout32 = conv_color[li][color];
