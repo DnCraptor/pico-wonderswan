@@ -75,6 +75,7 @@ bool reboot = false;
 semaphore vga_start_semaphore;
 
 volatile bool ws_backplane_enabled = false;
+volatile bool ws_backplane_portrait = false;
 uint8_t backplane_mode = 0;   // 0=Auto (.ws only), 1=Off
 
 alignas(4) uint8_t SCREEN1[144][224];
@@ -2169,7 +2170,8 @@ int main() {
 #ifdef VGA
             // VGA backplane uses independent preconverted RGB222 data, so
             // On applies to both monochrome .ws and color .wsc cartridges.
-            ws_backplane_enabled = (backplane_mode == 0) && !portrait;
+            ws_backplane_enabled = (backplane_mode == 0);
+            ws_backplane_portrait = portrait;
 #else
             ws_backplane_enabled = (backplane_mode == 0) && mono_ws_rom_loaded(true) && !portrait;
 #endif

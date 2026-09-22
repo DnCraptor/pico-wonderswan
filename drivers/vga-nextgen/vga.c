@@ -193,9 +193,20 @@ void __time_critical_func() dma_handler_VGA() {
     if (graphics_mode == GRAPHICSMODE_DEFAULT && ws_backplane_enabled &&
         line_number >= 0 && line_number < 240) {
         uint16_t *bp_out = (uint16_t *)(*output_buffer) + shift_picture / 2;
-        const uint8_t *bp = ws_backplane_vga + (unsigned)line_number * 320u;
+        const uint8_t *bp_image = ws_backplane_portrait ? ws_backplane_vga_portrait : ws_backplane_vga;
+        const uint8_t *bp = bp_image + (unsigned)line_number * 320u;
         uint16_t *bp_palette = ws_backplane_vga_pairs;
-        if (line_number < 48 || line_number >= 192) {
+        if (ws_backplane_portrait) {
+            if (line_number < 8 || line_number >= 232) {
+                for (unsigned x = 0; x < 320; ++x)
+                    bp_out[x] = bp_palette[bp[x]];
+            } else {
+                for (unsigned x = 0; x < 88; ++x) {
+                    bp_out[x] = bp_palette[bp[x]];
+                    bp_out[x + 232] = bp_palette[bp[x + 232]];
+                }
+            }
+        } else if (line_number < 48 || line_number >= 192) {
             for (unsigned x = 0; x < 320; ++x)
                 bp_out[x] = bp_palette[bp[x]];
         } else {
