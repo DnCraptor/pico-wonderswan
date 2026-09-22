@@ -167,7 +167,7 @@ size_t wonderswan_qspi_rom_capacity(void) {
     return psram_available ? psram_size - WONDERSWAN_QSPI_AUX_SIZE : 0;
 }
 uintptr_t wonderswan_qspi_aux_base(void) {
-    return psram_available ? WONDERSWAN_QSPI_PSRAM_UNCACHED_BASE + wonderswan_qspi_rom_capacity() : 0;
+    return psram_available ? WONDERSWAN_QSPI_PSRAM_BASE + wonderswan_qspi_rom_capacity() : 0;
 }
 
 #else
