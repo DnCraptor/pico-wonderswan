@@ -1020,7 +1020,8 @@ bool toggle_color() {
 enum palette_mode_e : uint8_t {
     PALETTE_DEFAULT = 0,
     PALETTE_COLD = 1,
-    PALETTE_CUSTOM = 2
+    PALETTE_HOT = 2,
+    PALETTE_CUSTOM = 3
 };
 uint8_t palette_index = PALETTE_DEFAULT;
 bool show_fps = false;
@@ -1049,7 +1050,7 @@ static bool apply_audio_rate() {
 static bool mono_ws_rom_loaded(bool game_loaded);
 
 #define WS_CONFIG_MAGIC 0x31434657u /* WFC1 */
-#define WS_CONFIG_VERSION 7u
+#define WS_CONFIG_VERSION 8u
 
 typedef struct __attribute__((packed)) {
     uint32_t magic;
@@ -1075,6 +1076,13 @@ static const uint32_t cold_ws_shades[16] = {
     0x9fdfa9, 0xf2942b, 0x34758c, 0x019901,
     0x30654e, 0x5c5121, 0x185949, 0x473db3,
     0x321600, 0xa01616, 0x2e0c57, 0x0c0422
+};
+
+static const uint32_t hot_ws_shades[16] = {
+    0xfffbf1, 0xd7ecbe, 0xfac283, 0xb6d7a8,
+    0xcac0a5, 0x9a94df, 0xcf8288, 0x1155cc,
+    0xb47430, 0x741b47, 0xb13737, 0x965f26,
+    0x321600, 0x274e13, 0x610101, 0x0c0422
 };
 
 static void init_custom_palette_from_default(void) {
@@ -1106,6 +1114,10 @@ static void apply_selected_palette(void) {
         case PALETTE_COLD:
             for (unsigned i = 0; i < 16; ++i)
                 ws_shades[i] = cold_ws_shades[i];
+            break;
+        case PALETTE_HOT:
+            for (unsigned i = 0; i < 16; ++i)
+                ws_shades[i] = hot_ws_shades[i];
             break;
         case PALETTE_CUSTOM:
             apply_global_palette();
@@ -1154,7 +1166,8 @@ static bool load_config(void) {
     const FRESULT fr = f_read(&file, &c, sizeof(c), &bytes_read);
     f_close(&file);
     if (fr != FR_OK || bytes_read != sizeof(c) ||
-        c.magic != WS_CONFIG_MAGIC || c.version != WS_CONFIG_VERSION)
+        c.magic != WS_CONFIG_MAGIC ||
+        (c.version != 7u && c.version != WS_CONFIG_VERSION))
         return false;
 
     swap_ab = c.swap_ab != 0;
@@ -1164,7 +1177,10 @@ static bool load_config(void) {
     audio_rate_shift = c.audio_rate_shift <= 3 ? c.audio_rate_shift : 0;
     frame_skip = c.frame_skip <= 3 ? c.frame_skip : 0;
     demo_duration = c.demo_duration < count_of(demo_seconds) ? c.demo_duration : 0;
-    palette_index = c.palette_mode <= PALETTE_CUSTOM ? c.palette_mode : PALETTE_DEFAULT;
+    /* v7 used value 2 for Custom.  v8 inserts Hot at 2 and moves Custom to 3. */
+    palette_index = (c.version == 7u && c.palette_mode == 2u)
+                        ? PALETTE_CUSTOM
+                        : (c.palette_mode <= PALETTE_CUSTOM ? c.palette_mode : PALETTE_DEFAULT);
     backplane_mode = c.backplane_mode <= 1 ? c.backplane_mode : 0;
     for (unsigned i = 0; i < 16; ++i)
         global_ws_shades[i] = c.custom_shades[i] & 0x00ffffffu;
@@ -1613,7 +1629,7 @@ const MenuItem menu_items[] = {
         { "Volume: %s", ARRAY, &audio_volume, &apply_audio_volume, 4, { "Mute", "12% ", "25% ", "50% ", "100%" }},
         { "Emulate Sound: %s", ARRAY, &audio_rate_shift, &apply_audio_rate, 3, { "24 kHz", "12 kHz", "6 kHz ", "3 kHz " }},
         { "Frame skip: %s", ARRAY, &frame_skip, nullptr, 3, { "75 Hz", "50 Hz", "25 Hz", "Auto " }},
-        { "Palette: %s", ARRAY, &palette_index, nullptr, 2, { "Default  ", "Cold     ", "Custom   " }},
+        { "Palette: %s", ARRAY, &palette_index, nullptr, 3, { "Default  ", "Cold     ", "Hot      ", "Custom   " }},
 #ifdef VGA
         { "Backplane: %s", ARRAY, &backplane_mode, nullptr, 1, { "On ", "Off" }},
 #else
