@@ -1,4 +1,5 @@
 #include "graphics.h"
+#include "wonderswan_backplane.h"
 #include "hardware/clocks.h"
 #include "stdbool.h"
 #include "hardware/structs/pll.h"
@@ -181,11 +182,37 @@ void __time_critical_func() dma_handler_VGA() {
         }
     }
 
+    /* VGA backplane: one byte from flash, one RAM palette lookup, one store. */
+    if (graphics_mode == GRAPHICSMODE_DEFAULT && ws_backplane_enabled &&
+        line_number >= 0 && line_number < 240) {
+        uint16_t *bp_out = (uint16_t *)(*output_buffer) + shift_picture / 2;
+        const uint8_t *bp = ws_backplane_vga + (unsigned)line_number * 320u;
+        uint16_t *bp_palette = palette[((line_number & is_flash_line) +
+                                        (frame_number & is_flash_frame)) & 1u] + 16;
+        if (line_number < 48 || line_number >= 192) {
+            for (unsigned x = 0; x < 320; ++x)
+                bp_out[x] = bp_palette[bp[x]];
+        } else {
+            for (unsigned x = 0; x < 48; ++x) {
+                bp_out[x] = bp_palette[bp[x]];
+                bp_out[x + 272] = bp_palette[bp[x + 272]];
+            }
+        }
+    }
+
     if (y < 0) {
+        if (graphics_mode == GRAPHICSMODE_DEFAULT && ws_backplane_enabled) {
+            dma_channel_set_read_addr(dma_chan_ctrl, output_buffer, false);
+            return;
+        }
         dma_channel_set_read_addr(dma_chan_ctrl, &lines_pattern[0], false); // TODO: ensue it is required
         return;
     }
     if (y >= graphics_buffer_height) {
+        if (graphics_mode == GRAPHICSMODE_DEFAULT && ws_backplane_enabled) {
+            dma_channel_set_read_addr(dma_chan_ctrl, output_buffer, false);
+            return;
+        }
         // заполнение линии цветом фона
         if (y == graphics_buffer_height | y == graphics_buffer_height + 1 |
             y == graphics_buffer_height + 2) {
