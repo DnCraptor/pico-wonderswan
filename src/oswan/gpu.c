@@ -649,7 +649,7 @@ static __always_inline uint8 *ws_tileCache_getTileRow(uint32 tileIndex, uint32 l
 static __always_inline void ws_drawClippedSpriteLine(uint8 *framebuffer, uint16 scanline,
                                      int x, int y, uint32 tileIndex, uint32 paletteIndex,
                                      uint32 vFlip, uint32 hFlip, bool windowEnabled, bool outsideWindow,
-                                     int window_x0, int window_y0, int window_x1, int window_y1) {
+                                     int window_x0, int window_y0, int window_x1, int window_y1, uint8 monoBase) {
 
     const int line = (int) scanline - y;
     if ((line < 0) || (line >= 8))
@@ -675,7 +675,7 @@ static __always_inline void ws_drawClippedSpriteLine(uint8 *framebuffer, uint16 
         } else {
             int16 *ws_paletteAlias = &ws_palette[paletteIndex << 2];
             if (*ws_tileRow || !(paletteIndex & 0x04))
-                framebuffer[px] = ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
+                framebuffer[px] = monoBase + ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
         }
     }
 }
@@ -805,13 +805,13 @@ void ws_gpu_renderScanline(uint8 *framebuffer) {
                 if ((tileInfo >> 9) & 0x04) {
                     for (int i = columnInTile; i < 8; i++) {
                         if (*ws_tileRow)
-                            *scanlinePtr = ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
+                            *scanlinePtr = 16 + ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
                         scanlinePtr++;
                         ws_tileRow++;
                     }
                 } else {
                     for (int i = columnInTile; i < 8; i++) {
-                        *scanlinePtr = ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
+                        *scanlinePtr = 16 + ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
                         scanlinePtr++;
                         ws_tileRow++;
                     }
@@ -829,53 +829,53 @@ void ws_gpu_renderScanline(uint8 *framebuffer) {
                 int16 *ws_paletteAlias = &ws_palette[((tileInfo >> 9) & 0x0f) << 2];
 
                 if ((tileInfo >> 9) & 0x04) {
-                    if (*ws_tileRow) *scanlinePtr = ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
+                    if (*ws_tileRow) *scanlinePtr = 16 + ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
                     scanlinePtr++;
                     ws_tileRow++;
-                    if (*ws_tileRow) *scanlinePtr = ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
+                    if (*ws_tileRow) *scanlinePtr = 16 + ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
                     scanlinePtr++;
                     ws_tileRow++;
-                    if (*ws_tileRow) *scanlinePtr = ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
+                    if (*ws_tileRow) *scanlinePtr = 16 + ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
                     scanlinePtr++;
                     ws_tileRow++;
-                    if (*ws_tileRow) *scanlinePtr = ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
+                    if (*ws_tileRow) *scanlinePtr = 16 + ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
                     scanlinePtr++;
                     ws_tileRow++;
-                    if (*ws_tileRow) *scanlinePtr = ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
+                    if (*ws_tileRow) *scanlinePtr = 16 + ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
                     scanlinePtr++;
                     ws_tileRow++;
-                    if (*ws_tileRow) *scanlinePtr = ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
+                    if (*ws_tileRow) *scanlinePtr = 16 + ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
                     scanlinePtr++;
                     ws_tileRow++;
-                    if (*ws_tileRow) *scanlinePtr = ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
+                    if (*ws_tileRow) *scanlinePtr = 16 + ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
                     scanlinePtr++;
                     ws_tileRow++;
-                    if (*ws_tileRow) *scanlinePtr = ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
+                    if (*ws_tileRow) *scanlinePtr = 16 + ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
                     scanlinePtr++;
                     ws_tileRow++;
                 } else {
-                    *scanlinePtr = ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
+                    *scanlinePtr = 16 + ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
                     scanlinePtr++;
                     ws_tileRow++;
-                    *scanlinePtr = ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
+                    *scanlinePtr = 16 + ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
                     scanlinePtr++;
                     ws_tileRow++;
-                    *scanlinePtr = ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
+                    *scanlinePtr = 16 + ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
                     scanlinePtr++;
                     ws_tileRow++;
-                    *scanlinePtr = ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
+                    *scanlinePtr = 16 + ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
                     scanlinePtr++;
                     ws_tileRow++;
-                    *scanlinePtr = ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
+                    *scanlinePtr = 16 + ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
                     scanlinePtr++;
                     ws_tileRow++;
-                    *scanlinePtr = ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
+                    *scanlinePtr = 16 + ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
                     scanlinePtr++;
                     ws_tileRow++;
-                    *scanlinePtr = ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
+                    *scanlinePtr = 16 + ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
                     scanlinePtr++;
                     ws_tileRow++;
-                    *scanlinePtr = ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
+                    *scanlinePtr = 16 + ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
                     scanlinePtr++;
                     ws_tileRow++;
                 }
@@ -894,13 +894,13 @@ void ws_gpu_renderScanline(uint8 *framebuffer) {
                 if ((tileInfo >> 9) & 0x04) {
                     for (int i = 0; i < columnInTile; i++) {
                         if (*ws_tileRow)
-                            *scanlinePtr = ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
+                            *scanlinePtr = 16 + ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
                         scanlinePtr++;
                         ws_tileRow++;
                     }
                 } else {
                     for (int i = 0; i < columnInTile; i++) {
-                        *scanlinePtr = ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
+                        *scanlinePtr = 16 + ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
                         scanlinePtr++;
                         ws_tileRow++;
                     }
@@ -935,7 +935,7 @@ void ws_gpu_renderScanline(uint8 *framebuffer) {
                                          spr & 0x4000, spr & 0x8000,
                                          spriteWindowEnabled, (spr & 0x1000) != 0,
                                          ws_sprWindow_x0, ws_sprWindow_y0,
-                                         ws_sprWindow_x1, ws_sprWindow_y1);
+                                         ws_sprWindow_x1, ws_sprWindow_y1, 32);
             }
         }
     }
@@ -1051,13 +1051,13 @@ void ws_gpu_renderScanline(uint8 *framebuffer) {
                     if ((tileInfo >> 9) & 0x04) {
                         for (int i = columnInTile; i < 8; i++) {
                             if (*ws_tileRow)
-                                *scanlinePtr = ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
+                                *scanlinePtr = 48 + ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
                             scanlinePtr++;
                             ws_tileRow++;
                         }
                     } else {
                         for (int i = columnInTile; i < 8; i++) {
-                            *scanlinePtr = ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
+                            *scanlinePtr = 48 + ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
                             scanlinePtr++;
                             ws_tileRow++;
                         }
@@ -1076,53 +1076,53 @@ void ws_gpu_renderScanline(uint8 *framebuffer) {
                     int16 *ws_paletteAlias = &ws_palette[((tileInfo >> 9) & 0x0f) << 2];
 
                     if ((tileInfo >> 9) & 0x04) {
-                        if (*ws_tileRow) *scanlinePtr = ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
+                        if (*ws_tileRow) *scanlinePtr = 48 + ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
                         scanlinePtr++;
                         ws_tileRow++;
-                        if (*ws_tileRow) *scanlinePtr = ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
+                        if (*ws_tileRow) *scanlinePtr = 48 + ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
                         scanlinePtr++;
                         ws_tileRow++;
-                        if (*ws_tileRow) *scanlinePtr = ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
+                        if (*ws_tileRow) *scanlinePtr = 48 + ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
                         scanlinePtr++;
                         ws_tileRow++;
-                        if (*ws_tileRow) *scanlinePtr = ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
+                        if (*ws_tileRow) *scanlinePtr = 48 + ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
                         scanlinePtr++;
                         ws_tileRow++;
-                        if (*ws_tileRow) *scanlinePtr = ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
+                        if (*ws_tileRow) *scanlinePtr = 48 + ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
                         scanlinePtr++;
                         ws_tileRow++;
-                        if (*ws_tileRow) *scanlinePtr = ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
+                        if (*ws_tileRow) *scanlinePtr = 48 + ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
                         scanlinePtr++;
                         ws_tileRow++;
-                        if (*ws_tileRow) *scanlinePtr = ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
+                        if (*ws_tileRow) *scanlinePtr = 48 + ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
                         scanlinePtr++;
                         ws_tileRow++;
-                        if (*ws_tileRow) *scanlinePtr = ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
+                        if (*ws_tileRow) *scanlinePtr = 48 + ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
                         scanlinePtr++;
                         ws_tileRow++;
                     } else {
-                        *scanlinePtr = ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
+                        *scanlinePtr = 48 + ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
                         scanlinePtr++;
                         ws_tileRow++;
-                        *scanlinePtr = ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
+                        *scanlinePtr = 48 + ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
                         scanlinePtr++;
                         ws_tileRow++;
-                        *scanlinePtr = ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
+                        *scanlinePtr = 48 + ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
                         scanlinePtr++;
                         ws_tileRow++;
-                        *scanlinePtr = ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
+                        *scanlinePtr = 48 + ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
                         scanlinePtr++;
                         ws_tileRow++;
-                        *scanlinePtr = ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
+                        *scanlinePtr = 48 + ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
                         scanlinePtr++;
                         ws_tileRow++;
-                        *scanlinePtr = ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
+                        *scanlinePtr = 48 + ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
                         scanlinePtr++;
                         ws_tileRow++;
-                        *scanlinePtr = ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
+                        *scanlinePtr = 48 + ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
                         scanlinePtr++;
                         ws_tileRow++;
-                        *scanlinePtr = ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
+                        *scanlinePtr = 48 + ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
                         scanlinePtr++;
                         ws_tileRow++;
                     }
@@ -1141,13 +1141,13 @@ void ws_gpu_renderScanline(uint8 *framebuffer) {
                     if ((tileInfo >> 9) & 0x04) {
                         for (int i = 0; i < columnInTile; i++) {
                             if (*ws_tileRow)
-                                *scanlinePtr = ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
+                                *scanlinePtr = 48 + ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
                             scanlinePtr++;
                             ws_tileRow++;
                         }
                     } else {
                         for (int i = 0; i < columnInTile; i++) {
-                            *scanlinePtr = ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
+                            *scanlinePtr = 48 + ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
                             scanlinePtr++;
                             ws_tileRow++;
                         }
@@ -1236,7 +1236,7 @@ void ws_gpu_renderScanline(uint8 *framebuffer) {
 
                     for (int i = columnInTile; i < 8; i++) {
                         if ((*ws_tileRow) && (column >= ws_fgWindow_x0) && (column <= ws_fgWindow_x1))
-                            *scanlinePtr = ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
+                            *scanlinePtr = 48 + ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
                         column++;
                         scanlinePtr++;
                         ws_tileRow++;
@@ -1256,42 +1256,42 @@ void ws_gpu_renderScanline(uint8 *framebuffer) {
 
 
                     if ((*ws_tileRow) && (column >= ws_fgWindow_x0) && (column <= ws_fgWindow_x1))
-                        *scanlinePtr = ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
+                        *scanlinePtr = 48 + ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
                     scanlinePtr++;
                     ws_tileRow++;
                     column++;
                     if ((*ws_tileRow) && (column >= ws_fgWindow_x0) && (column <= ws_fgWindow_x1))
-                        *scanlinePtr = ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
+                        *scanlinePtr = 48 + ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
                     scanlinePtr++;
                     ws_tileRow++;
                     column++;
                     if ((*ws_tileRow) && (column >= ws_fgWindow_x0) && (column <= ws_fgWindow_x1))
-                        *scanlinePtr = ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
+                        *scanlinePtr = 48 + ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
                     scanlinePtr++;
                     ws_tileRow++;
                     column++;
                     if ((*ws_tileRow) && (column >= ws_fgWindow_x0) && (column <= ws_fgWindow_x1))
-                        *scanlinePtr = ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
+                        *scanlinePtr = 48 + ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
                     scanlinePtr++;
                     ws_tileRow++;
                     column++;
                     if ((*ws_tileRow) && (column >= ws_fgWindow_x0) && (column <= ws_fgWindow_x1))
-                        *scanlinePtr = ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
+                        *scanlinePtr = 48 + ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
                     scanlinePtr++;
                     ws_tileRow++;
                     column++;
                     if ((*ws_tileRow) && (column >= ws_fgWindow_x0) && (column <= ws_fgWindow_x1))
-                        *scanlinePtr = ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
+                        *scanlinePtr = 48 + ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
                     scanlinePtr++;
                     ws_tileRow++;
                     column++;
                     if ((*ws_tileRow) && (column >= ws_fgWindow_x0) && (column <= ws_fgWindow_x1))
-                        *scanlinePtr = ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
+                        *scanlinePtr = 48 + ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
                     scanlinePtr++;
                     ws_tileRow++;
                     column++;
                     if ((*ws_tileRow) && (column >= ws_fgWindow_x0) && (column <= ws_fgWindow_x1))
-                        *scanlinePtr = ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
+                        *scanlinePtr = 48 + ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
                     scanlinePtr++;
                     ws_tileRow++;
                     column++;
@@ -1309,7 +1309,7 @@ void ws_gpu_renderScanline(uint8 *framebuffer) {
 
                     for (int i = 0; i < columnInTile; i++) {
                         if ((*ws_tileRow) && (column >= ws_fgWindow_x0) && (column <= ws_fgWindow_x1))
-                            *scanlinePtr = ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
+                            *scanlinePtr = 48 + ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
                         column++;
                         scanlinePtr++;
                         ws_tileRow++;
@@ -1393,7 +1393,7 @@ void ws_gpu_renderScanline(uint8 *framebuffer) {
 
                     for (int i = columnInTile; i < 8; i++) {
                         if ((*ws_tileRow) && ((column < ws_fgWindow_x0) || (column > ws_fgWindow_x1)))
-                            *scanlinePtr = ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
+                            *scanlinePtr = 48 + ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
                         column++;
                         scanlinePtr++;
                         ws_tileRow++;
@@ -1411,42 +1411,42 @@ void ws_gpu_renderScanline(uint8 *framebuffer) {
                     int16 *ws_paletteAlias = &ws_palette[((tileInfo >> 9) & 0x0f) << 2];
 
                     if ((*ws_tileRow) && ((column < ws_fgWindow_x0) || (column > ws_fgWindow_x1)))
-                        *scanlinePtr = ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
+                        *scanlinePtr = 48 + ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
                     scanlinePtr++;
                     ws_tileRow++;
                     column++;
                     if ((*ws_tileRow) && ((column < ws_fgWindow_x0) || (column > ws_fgWindow_x1)))
-                        *scanlinePtr = ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
+                        *scanlinePtr = 48 + ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
                     scanlinePtr++;
                     ws_tileRow++;
                     column++;
                     if ((*ws_tileRow) && ((column < ws_fgWindow_x0) || (column > ws_fgWindow_x1)))
-                        *scanlinePtr = ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
+                        *scanlinePtr = 48 + ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
                     scanlinePtr++;
                     ws_tileRow++;
                     column++;
                     if ((*ws_tileRow) && ((column < ws_fgWindow_x0) || (column > ws_fgWindow_x1)))
-                        *scanlinePtr = ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
+                        *scanlinePtr = 48 + ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
                     scanlinePtr++;
                     ws_tileRow++;
                     column++;
                     if ((*ws_tileRow) && ((column < ws_fgWindow_x0) || (column > ws_fgWindow_x1)))
-                        *scanlinePtr = ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
+                        *scanlinePtr = 48 + ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
                     scanlinePtr++;
                     ws_tileRow++;
                     column++;
                     if ((*ws_tileRow) && ((column < ws_fgWindow_x0) || (column > ws_fgWindow_x1)))
-                        *scanlinePtr = ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
+                        *scanlinePtr = 48 + ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
                     scanlinePtr++;
                     ws_tileRow++;
                     column++;
                     if ((*ws_tileRow) && ((column < ws_fgWindow_x0) || (column > ws_fgWindow_x1)))
-                        *scanlinePtr = ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
+                        *scanlinePtr = 48 + ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
                     scanlinePtr++;
                     ws_tileRow++;
                     column++;
                     if ((*ws_tileRow) && ((column < ws_fgWindow_x0) || (column > ws_fgWindow_x1)))
-                        *scanlinePtr = ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
+                        *scanlinePtr = 48 + ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
                     scanlinePtr++;
                     ws_tileRow++;
                     column++;
@@ -1464,7 +1464,7 @@ void ws_gpu_renderScanline(uint8 *framebuffer) {
 
                     for (int i = 0; i < columnInTile; i++) {
                         if ((*ws_tileRow) && ((column < ws_fgWindow_x0) || (column > ws_fgWindow_x1)))
-                            *scanlinePtr = ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
+                            *scanlinePtr = 48 + ws_paletteColors[ws_paletteAlias[*ws_tileRow]];
                         column++;
                         scanlinePtr++;
                         ws_tileRow++;
@@ -1503,7 +1503,7 @@ void ws_gpu_renderScanline(uint8 *framebuffer) {
                                          spr & 0x4000, spr & 0x8000,
                                          spriteWindowEnabled, (spr & 0x1000) != 0,
                                          ws_sprWindow_x0, ws_sprWindow_y0,
-                                         ws_sprWindow_x1, ws_sprWindow_y1);
+                                         ws_sprWindow_x1, ws_sprWindow_y1, 64);
             }
         }
     }

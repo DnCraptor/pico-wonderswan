@@ -252,7 +252,7 @@ void process_kbd_report(hid_keyboard_report_t const* report, hid_keyboard_report
 
     altPressed = isInReport(report, HID_KEY_ALT_LEFT) || isInReport(report, HID_KEY_ALT_RIGHT);
     ctrlPressed = isInReport(report, HID_KEY_CONTROL_LEFT) || isInReport(report, HID_KEY_CONTROL_RIGHT);
-    
+
     if (altPressed && ctrlPressed && isInReport(report, HID_KEY_DELETE)) {
         watchdog_enable(10, true);
         while(true) {
@@ -1030,7 +1030,10 @@ enum palette_mode_e : uint8_t {
     PALETTE_HOT = 2,
     PALETTE_CUSTOM = 3
 };
-uint8_t palette_index = PALETTE_DEFAULT;
+enum palette_layer_e : uint8_t {
+    PALETTE_BACK = 0, PALETTE_SCREEN1, PALETTE_SPRITES0, PALETTE_SCREEN2, PALETTE_SPRITES1, PALETTE_LAYER_COUNT
+};
+uint8_t palette_index[PALETTE_LAYER_COUNT] = { PALETTE_DEFAULT, PALETTE_DEFAULT, PALETTE_DEFAULT, PALETTE_DEFAULT, PALETTE_DEFAULT };
 bool show_fps = false;
 uint8_t audio_volume = 4;
 uint8_t audio_rate_shift = 0;
@@ -1057,7 +1060,7 @@ static bool apply_audio_rate() {
 static bool mono_ws_rom_loaded(bool game_loaded);
 
 #define WS_CONFIG_MAGIC 0x31434657u /* WFC1 */
-#define WS_CONFIG_VERSION 8u
+#define WS_CONFIG_VERSION 9u
 
 typedef struct __attribute__((packed)) {
     uint32_t magic;
@@ -1069,8 +1072,9 @@ typedef struct __attribute__((packed)) {
     uint8_t audio_rate_shift;
     uint8_t frame_skip;
     uint8_t demo_duration;
-    uint8_t palette_mode;
+    uint8_t palette_mode; /* Back; retained in place for v8-compatible prefix */
     uint8_t backplane_mode;
+    uint8_t palette_modes[4]; /* Screen1, Sprites0, Screen2, Sprites1 */
     uint32_t custom_shades[16];
 } ws_config_t;
 
@@ -1111,40 +1115,54 @@ static void apply_global_palette(void) {
         ws_shades[i] = global_ws_shades[i];
 }
 
+static const uint32_t *palette_colors_for_mode(uint8_t mode) {
+    switch (mode) {
+        case PALETTE_COLD: return cold_ws_shades;
+        case PALETTE_HOT: return hot_ws_shades;
+        case PALETTE_CUSTOM:
+            if (!global_palette_valid) init_custom_palette_from_default();
+            return global_ws_shades;
+        case PALETTE_DEFAULT:
+        default: return ws_colour_scheme_default;
+    }
+}
+
+static void apply_selected_palettes(void) {
+    /* WonderSwan Color keeps the original 256-entry hardware palette path. */
+    if (ws_gpu_operatingInColor) {
+        ws_gpu_refresh_palette();
+        return;
+    }
+
+    /* Mono .ws renderer emits five independent 16-entry index banks. */
+    for (unsigned layer = 0; layer < PALETTE_LAYER_COUNT; ++layer) {
+        const uint32_t *colors = palette_colors_for_mode(palette_index[layer]);
+        for (unsigned i = 0; i < 16; ++i)
+            graphics_set_palette((uint8_t)(layer * 16u + i), colors[i] & 0x00ffffffu);
+    }
+
+    /* Keep ws_shades as the editable 16-colour palette used by the existing
+       palette editor and per-game Custom INI. */
+    const uint32_t *back = palette_colors_for_mode(palette_index[PALETTE_BACK]);
+    for (unsigned i = 0; i < 16; ++i) ws_shades[i] = back[i] & 0x00ffffffu;
+}
+
 static void apply_current_palette_to_video(void) {
-    for (unsigned i = 0; i < 16; ++i)
-        graphics_set_palette((uint8_t)i, ws_shades[i]);
+    apply_selected_palettes();
 }
 
 static void apply_selected_palette(void) {
-    switch (palette_index) {
-        case PALETTE_COLD:
-            for (unsigned i = 0; i < 16; ++i)
-                ws_shades[i] = cold_ws_shades[i];
-            break;
-        case PALETTE_HOT:
-            for (unsigned i = 0; i < 16; ++i)
-                ws_shades[i] = hot_ws_shades[i];
-            break;
-        case PALETTE_CUSTOM:
-            apply_global_palette();
-            break;
-        case PALETTE_DEFAULT:
-        default:
-            ws_set_colour_scheme(0);
-            break;
-    }
-    apply_current_palette_to_video();
+    apply_selected_palettes();
 }
 
 static void ensure_custom_palette_for_edit(void) {
-    if (palette_index == PALETTE_CUSTOM)
+    if (palette_index[PALETTE_BACK] == PALETTE_CUSTOM)
         return;
 
-    /* Fork a preset only on the first real edit. Opening and closing the
-       editor without changing a colour must not overwrite Custom. */
+    /* The editor edits the shared Custom palette and previews it through the
+       Back bank; the other four layer selectors remain independent. */
     capture_global_palette();
-    palette_index = PALETTE_CUSTOM;
+    palette_index[PALETTE_BACK] = PALETTE_CUSTOM;
 }
 
 
@@ -1159,23 +1177,39 @@ static bool load_config(void) {
         f_open(&file, "/.config/wonderswan/wonderswan.conf", FA_READ) != FR_OK)
         return false;
 
-    /* Config files are deliberately not migrated.  Reject anything that is
-       not exactly the current on-disk format before touching runtime state.
-       In particular, do not call any palette/video function here: main()
-       loads the config before core1 has initialized the video backend. */
-    if (f_size(&file) != sizeof(ws_config_t)) {
-        f_close(&file);
-        return false;
-    }
-
+    const FSIZE_t size = f_size(&file);
     ws_config_t c = {};
     UINT bytes_read = 0;
-    const FRESULT fr = f_read(&file, &c, sizeof(c), &bytes_read);
-    f_close(&file);
-    if (fr != FR_OK || bytes_read != sizeof(c) ||
-        c.magic != WS_CONFIG_MAGIC ||
-        (c.version != 7u && c.version != WS_CONFIG_VERSION))
-        return false;
+
+    if (size == sizeof(ws_config_t)) {
+        const FRESULT fr = f_read(&file, &c, sizeof(c), &bytes_read);
+        f_close(&file);
+        if (fr != FR_OK || bytes_read != sizeof(c) || c.magic != WS_CONFIG_MAGIC || c.version != WS_CONFIG_VERSION)
+            return false;
+    } else {
+        /* v8 had one palette selector and no per-layer selectors. Keep the
+           old packed prefix/layout and fan that selector out to all layers. */
+        typedef struct __attribute__((packed)) {
+            uint32_t magic;
+            uint8_t version, swap_ab, rotation_mode, show_fps, audio_volume,
+                    audio_rate_shift, frame_skip, demo_duration, palette_mode,
+                    backplane_mode;
+            uint32_t custom_shades[16];
+        } ws_config_v8_t;
+        if (size != sizeof(ws_config_v8_t)) { f_close(&file); return false; }
+        ws_config_v8_t old = {};
+        const FRESULT fr = f_read(&file, &old, sizeof(old), &bytes_read);
+        f_close(&file);
+        if (fr != FR_OK || bytes_read != sizeof(old) || old.magic != WS_CONFIG_MAGIC || old.version != 8u)
+            return false;
+        c.magic = old.magic; c.version = old.version; c.swap_ab = old.swap_ab;
+        c.rotation_mode = old.rotation_mode; c.show_fps = old.show_fps;
+        c.audio_volume = old.audio_volume; c.audio_rate_shift = old.audio_rate_shift;
+        c.frame_skip = old.frame_skip; c.demo_duration = old.demo_duration;
+        c.palette_mode = old.palette_mode; c.backplane_mode = old.backplane_mode;
+        for (unsigned i = 0; i < 16; ++i) c.custom_shades[i] = old.custom_shades[i];
+        for (unsigned i = 0; i < 4; ++i) c.palette_modes[i] = old.palette_mode;
+    }
 
     swap_ab = c.swap_ab != 0;
     rotation_mode = c.rotation_mode <= ROTATION_MANUAL ? c.rotation_mode : ROTATION_AUTO;
@@ -1184,10 +1218,10 @@ static bool load_config(void) {
     audio_rate_shift = c.audio_rate_shift <= 3 ? c.audio_rate_shift : 0;
     frame_skip = c.frame_skip <= 3 ? c.frame_skip : 0;
     demo_duration = c.demo_duration < count_of(demo_seconds) ? c.demo_duration : 0;
-    /* v7 used value 2 for Custom.  v8 inserts Hot at 2 and moves Custom to 3. */
-    palette_index = (c.version == 7u && c.palette_mode == 2u)
-                        ? PALETTE_CUSTOM
-                        : (c.palette_mode <= PALETTE_CUSTOM ? c.palette_mode : PALETTE_DEFAULT);
+    const uint8_t back_mode = c.palette_mode <= PALETTE_CUSTOM ? c.palette_mode : PALETTE_DEFAULT;
+    palette_index[PALETTE_BACK] = back_mode;
+    for (unsigned i = 1; i < PALETTE_LAYER_COUNT; ++i)
+        palette_index[i] = c.palette_modes[i - 1] <= PALETTE_CUSTOM ? c.palette_modes[i - 1] : PALETTE_DEFAULT;
     backplane_mode = c.backplane_mode <= 1 ? c.backplane_mode : 0;
     for (unsigned i = 0; i < 16; ++i)
         global_ws_shades[i] = c.custom_shades[i] & 0x00ffffffu;
@@ -1208,7 +1242,8 @@ static bool save_config(void) {
     c.audio_rate_shift = audio_rate_shift;
     c.frame_skip = frame_skip;
     c.demo_duration = demo_duration;
-    c.palette_mode = palette_index;
+    c.palette_mode = palette_index[PALETTE_BACK];
+    for (unsigned i = 1; i < PALETTE_LAYER_COUNT; ++i) c.palette_modes[i - 1] = palette_index[i];
     c.backplane_mode = backplane_mode;
     if (!global_palette_valid)
         init_custom_palette_from_default();
@@ -1293,7 +1328,7 @@ static bool game_palette_read(void) {
         global_ws_shades[i] = (uint32_t)c[i];
     }
     global_palette_valid = true;
-    palette_index = PALETTE_CUSTOM;
+    for (unsigned layer = 0; layer < PALETTE_LAYER_COUNT; ++layer) palette_index[layer] = PALETTE_CUSTOM;
     apply_global_palette();
     return true;
 }
@@ -1313,7 +1348,7 @@ static bool game_palette_action(void) {
         /* A game palette is Custom by definition.  Keep the exact colours
            that were just written as the editable Custom palette as well. */
         capture_global_palette();
-        palette_index = PALETTE_CUSTOM;
+        for (unsigned layer = 0; layer < PALETTE_LAYER_COUNT; ++layer) palette_index[layer] = PALETTE_CUSTOM;
         game_palette_linked = true;
     }
     return false;
@@ -1493,7 +1528,7 @@ static bool show_current_palettes(void) {
             if (game_palette_linked) {
                 game_palette_write();
             } else {
-                if (palette_index == PALETTE_CUSTOM)
+                if (palette_index[PALETTE_BACK] == PALETTE_CUSTOM)
                         capture_global_palette();
                 save_config();
             }
@@ -1562,7 +1597,7 @@ static bool show_current_palettes(void) {
                 if (game_palette_linked) {
                     game_palette_write();
                 } else {
-                    if (palette_index == PALETTE_CUSTOM)
+                    if (palette_index[PALETTE_BACK] == PALETTE_CUSTOM)
                         capture_global_palette();
                     save_config();
                 }
@@ -1605,7 +1640,7 @@ static bool show_current_palettes(void) {
                 if (game_palette_linked) {
                     game_palette_write();
                 } else {
-                    if (palette_index == PALETTE_CUSTOM)
+                    if (palette_index[PALETTE_BACK] == PALETTE_CUSTOM)
                         capture_global_palette();
                     save_config();
                 }
@@ -1636,7 +1671,11 @@ const MenuItem menu_items[] = {
         { "Volume: %s", ARRAY, &audio_volume, &apply_audio_volume, 4, { "Mute", "12% ", "25% ", "50% ", "100%" }},
         { "Emulate Sound: %s", ARRAY, &audio_rate_shift, &apply_audio_rate, 3, { "24 kHz", "12 kHz", "6 kHz ", "3 kHz " }},
         { "Frame skip: %s", ARRAY, &frame_skip, nullptr, 3, { "75 Hz", "50 Hz", "25 Hz", "Auto " }},
-        { "Palette: %s", ARRAY, &palette_index, nullptr, 3, { "Default  ", "Cold     ", "Hot      ", "Custom   " }},
+        { "Back: %s",      ARRAY, &palette_index[PALETTE_BACK],     nullptr, 3, { "Default  ", "Cold     ", "Hot      ", "Custom   " }},
+        { "Screen 1: %s",  ARRAY, &palette_index[PALETTE_SCREEN1],  nullptr, 3, { "Default  ", "Cold     ", "Hot      ", "Custom   " }},
+        { "Sprites 0: %s", ARRAY, &palette_index[PALETTE_SPRITES0], nullptr, 3, { "Default  ", "Cold     ", "Hot      ", "Custom   " }},
+        { "Screen 2: %s",  ARRAY, &palette_index[PALETTE_SCREEN2],  nullptr, 3, { "Default  ", "Cold     ", "Hot      ", "Custom   " }},
+        { "Sprites 1: %s", ARRAY, &palette_index[PALETTE_SPRITES1], nullptr, 3, { "Default  ", "Cold     ", "Hot      ", "Custom   " }},
 #ifdef VGA
         { "Backplane: %s", ARRAY, &backplane_mode, nullptr, 1, { "On ", "Off" }},
 #else
@@ -1775,8 +1814,8 @@ static void menu(bool game_loaded) {
                                 apply_audio_volume();
                             else if (changed && item->value == &audio_rate_shift)
                                 apply_audio_rate();
-                            else if (changed && item->value == &palette_index)
-                                apply_selected_palette();
+                            else if (changed && (item->value == &palette_index[0] || item->value == &palette_index[1] || item->value == &palette_index[2] || item->value == &palette_index[3] || item->value == &palette_index[4]))
+                                apply_selected_palettes();
                         }
                         break;
                     case RETURN:
@@ -2062,7 +2101,7 @@ int main() {
         apply_current_palette_to_video();
 #ifdef HDMI
         if (mono_ws_rom_loaded(true)) {
-            for (unsigned i = 0; i < 208; ++i)
+            for (unsigned i = 0; i < 144; ++i)
                 graphics_set_palette(ws_backplane_palette_slots[i], ws_backplane_palette[i]);
         }
 #endif
@@ -2092,11 +2131,13 @@ int main() {
             const int8_t palette_cycle = palette_cycle_requested;
             if (palette_cycle) {
                 palette_cycle_requested = 0;
-                if (palette_cycle < 0)
-                    palette_index = (palette_index + PALETTE_CUSTOM) % (PALETTE_CUSTOM + 1);
-                else
-                    palette_index = (palette_index + 1) % (PALETTE_CUSTOM + 1);
-                apply_selected_palette();
+                for (unsigned layer = 0; layer < PALETTE_LAYER_COUNT; ++layer) {
+                    if (palette_cycle < 0)
+                        palette_index[layer] = (palette_index[layer] + PALETTE_CUSTOM) % (PALETTE_CUSTOM + 1);
+                    else
+                        palette_index[layer] = (palette_index[layer] + 1) % (PALETTE_CUSTOM + 1);
+                }
+                apply_selected_palettes();
             }
 
             if (palette_f12_requested) {
