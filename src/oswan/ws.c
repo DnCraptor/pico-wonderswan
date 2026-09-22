@@ -43,6 +43,8 @@
 uint32	ws_cycles;
 uint32	ws_skip;
 uint32	ws_cyclesByLine=256;
+/* Instruction-boundary overshoot carried across scheduler slices. */
+static uint32 ws_cycle_debt = 0;
 uint8	ws_gpu_scroll_latch[4];   // 0x10 X1, 0x11 Y1, 0x12 X2, 0x13 Y2, sampled per line
 uint8	ws_int_pending = 0;         // latched interrupt sources (0xb2 bit layout)
 
@@ -196,6 +198,7 @@ void ws_reset(void)
 	ws_gpu_reset();
 	nec_reset(NULL);
 	nec_set_reg(NEC_SP,0x2000);
+	ws_cycle_debt=0;
 }
 ////////////////////////////////////////////////////////////////////////////////
 //
@@ -228,25 +231,38 @@ int __not_in_flash_func(ws_executeLine)(uint8 *framebuffer, int renderLine)
 	ws_gpu_scroll_latch[2]=ws_ioRam[0x12];
 	ws_gpu_scroll_latch[3]=ws_ioRam[0x13];
 
-	ws_cycles=nec_execute(224);
-	ws_audio_sync();
-	ws_serve_interrupts();
+    /* nec_execute() stops only at an instruction boundary, so it may consume
+       more cycles than requested.  Carry that overshoot into the next half-line
+       instead of giving every slice a fresh budget.  This keeps the long-term
+       CPU budget at exactly ws_cyclesByLine clocks per scanline. */
+    ws_cycles=0;
+    for (unsigned half=0; half<2; ++half)
+    {
+        const uint32 slice = ws_cyclesByLine >> 1;
+        uint32 ran = 0;
 
-	{
-		const uint32 second_cycles = nec_execute(32);
-		ws_audio_sync();
-		ws_serve_interrupts();
-		ws_cycles += second_cycles;
+        if (ws_cycle_debt >= slice)
+            ws_cycle_debt -= slice;
+        else
+        {
+            const uint32 budget = slice - ws_cycle_debt;
+            ws_cycle_debt = 0;
+            ran = (uint32)nec_execute((int)budget);
+            if (ran > budget)
+                ws_cycle_debt = ran - budget;
+        }
+
+        ws_cycles += ran;
+        ws_audio_sync();
+        ws_serve_interrupts();
 	}
 #ifdef DEBUG
 sprintf(buf, "%d", ws_cycles);
 pgDebug(buf, 2);
 #endif
-	if(ws_cycles>=ws_cyclesByLine+ws_cyclesByLine)
-		ws_skip=ws_cycles/ws_cyclesByLine;
-	else
-		ws_skip=1;
-	ws_cycles%=ws_cyclesByLine;
+    /* Scanline time is fixed; CPU instruction overshoot is represented by
+       ws_cycle_debt and must not advance additional video lines. */
+    ws_skip=1;
 
 #ifdef DEBUG
 sprintf(buf, "%d", ws_cycles);
