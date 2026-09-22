@@ -119,6 +119,7 @@ static bool keyboard_9 = false, keyboard_0 = false;
 static volatile bool palette_editor_active = false;
 static volatile int8_t palette_hex_key = -1;
 static volatile bool palette_f12_requested = false;
+static volatile int8_t palette_cycle_requested = 0;
 
 static bool portrait_enabled() {
     bool portrait;
@@ -191,6 +192,12 @@ void process_kbd_report(hid_keyboard_report_t const* report, hid_keyboard_report
     // resolved in the emulation loop together with the native X/Y groups.
     keyboard_bits.b = isInReport(report, HID_KEY_Z);
     keyboard_bits.a = isInReport(report, HID_KEY_X);
+
+    /* Palette hotkeys are edge-triggered: F9 cycles backwards, F10 forwards. */
+    if (isInReport(report, HID_KEY_F9) && !isInReport(prev_report, HID_KEY_F9))
+        palette_cycle_requested = -1;
+    if (isInReport(report, HID_KEY_F10) && !isInReport(prev_report, HID_KEY_F10))
+        palette_cycle_requested = 1;
 
     /* F12 is an edge-triggered direct palette-editor toggle. */
     if (isInReport(report, HID_KEY_F12) && !isInReport(prev_report, HID_KEY_F12))
@@ -2082,6 +2089,16 @@ int main() {
         uint8_t  fs_phase = 0;      // frame-skip phase counter (mod 3)
         bool     fs_behind = false; // Auto: did the previous frame overrun its budget
         while (!reboot) {
+            const int8_t palette_cycle = palette_cycle_requested;
+            if (palette_cycle) {
+                palette_cycle_requested = 0;
+                if (palette_cycle < 0)
+                    palette_index = (palette_index + PALETTE_CUSTOM) % (PALETTE_CUSTOM + 1);
+                else
+                    palette_index = (palette_index + 1) % (PALETTE_CUSTOM + 1);
+                apply_selected_palette();
+            }
+
             if (palette_f12_requested) {
                 palette_f12_requested = false;
                 show_current_palettes();
