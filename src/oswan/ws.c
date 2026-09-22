@@ -46,6 +46,42 @@ uint32	ws_cyclesByLine=256;
 uint8	ws_gpu_scroll_latch[4];   // 0x10 X1, 0x11 Y1, 0x12 X2, 0x13 Y2, sampled per line
 uint8	ws_int_pending = 0;         // latched interrupt sources (0xb2 bit layout)
 
+static inline uint16 ws_timer_counter(uint32 lo_port)
+{
+	return (uint16)ws_ioRam[lo_port] | ((uint16)ws_ioRam[lo_port + 1] << 8);
+}
+
+static inline void ws_timer_set_counter(uint32 lo_port, uint16 value)
+{
+	ws_ioRam[lo_port] = (uint8)value;
+	ws_ioRam[lo_port + 1] = (uint8)(value >> 8);
+}
+
+/* Clock one of the two hardware blanking timers.  A timer whose counter is 1
+   requests its interrupt on the blanking event even when countdown is disabled.
+   Countdown enable controls only whether values above 1 are decremented. */
+static inline void ws_timer_clock(uint32 counter_port, uint32 reload_port,
+                                  uint8 enable_mask, uint8 repeat_mask, uint8 irq_mask)
+{
+	uint16 counter = ws_timer_counter(counter_port);
+
+	if (counter == 1) {
+		if (ws_ioRam[0xb2] & irq_mask) {
+			ws_ioRam[0xb6] &= (uint8)~irq_mask;
+			ws_int_pending |= irq_mask;
+		}
+
+		if (ws_ioRam[0xa2] & repeat_mask)
+			ws_timer_set_counter(counter_port, ws_timer_counter(reload_port));
+		else if (ws_ioRam[0xa2] & enable_mask)
+			ws_timer_set_counter(counter_port, 0);
+		return;
+	}
+
+	if (counter && (ws_ioRam[0xa2] & enable_mask))
+		ws_timer_set_counter(counter_port, counter - 1);
+}
+
 /* Serve the highest-priority pending+enabled interrupt when IF allows it.
    Sources are LATCHED (unlike a direct nec_int at the scanline boundary, which
    was silently dropped whenever the game had interrupts masked - e.g. Klonoa's
@@ -192,12 +228,12 @@ int __not_in_flash_func(ws_executeLine)(uint8 *framebuffer, int renderLine)
 	ws_gpu_scroll_latch[2]=ws_ioRam[0x12];
 	ws_gpu_scroll_latch[3]=ws_ioRam[0x13];
 
-	ws_cycles=nec_execute(ws_cyclesByLine >> 1);
+	ws_cycles=nec_execute(224);
 	ws_audio_sync();
 	ws_serve_interrupts();
 
 	{
-		const uint32 second_cycles = nec_execute(ws_cyclesByLine >> 1);
+		const uint32 second_cycles = nec_execute(32);
 		ws_audio_sync();
 		ws_serve_interrupts();
 		ws_cycles += second_cycles;
@@ -240,19 +276,7 @@ sprintf(buf, "ws_gpu_scanline = %d", ws_gpu_scanline);
 pgDebug(buf, 4);
 #endif
 	if(ws_gpu_scanline>158)
-	{
 		ws_gpu_scanline=0;
-		{
-			if((ws_ioRam[0xb2]&32))/*VBLANK END INT*/ 
-			{
-				if(ws_ioRam[0xa7]!=0x35)/*Beatmania Fix*/
-				{
-					ws_ioRam[0xb6]&=~32;
-					ws_int_pending |= (1u << 5);
-				}
-			}
-		}
-	}
 	ws_ioRam[2]=ws_gpu_scanline;
 	if(drawWholeScreen)
 	{
@@ -265,22 +289,13 @@ pgDebug("VBLANK INT", 5);
 			ws_ioRam[0xb6]&=~64;
 			ws_int_pending |= (1u << 6);
 		}
+
+		/* VBlank timer is clocked once, at the beginning of line 144. */
+		ws_timer_clock(0xaa, 0xa6, 0x04, 0x08, 0x20);
 	}
-	if(ws_ioRam[0xa4]&&(ws_ioRam[0xb2]&128)) /*HBLANK INT*/
-	{
-#ifdef DEBUG
-pgDebug("VBLANK INT", 6);
-#endif
-		if(!ws_ioRam[0xa5])
-			ws_ioRam[0xa5]=ws_ioRam[0xa4];
-		if(ws_ioRam[0xa5]) 
-			ws_ioRam[0xa5]--;
-		if((!ws_ioRam[0xa5])&&(ws_ioRam[0xb2]&128))
-		{
-			ws_ioRam[0xb6]&=~128;
-			ws_int_pending |= (1u << 7);
-		}
-	}
+
+	/* HBlank timer is clocked once per scanline. */
+	ws_timer_clock(0xa8, 0xa4, 0x01, 0x02, 0x80);
 
 	if((ws_ioRam[0x2]==ws_ioRam[0x3])&&(ws_ioRam[0xb2]&16)) /*SCANLINE INT*/
 	{

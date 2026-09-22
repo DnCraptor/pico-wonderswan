@@ -68,6 +68,10 @@ void ws_io_reset(void) {
     for (int i = 0; i < 0xc9; i++)
         cpu_writeport(i, initialIoValue[i]);
 
+    /* Hardware timer counters start at zero after reset. */
+    ws_ioRam[0xa8] = ws_ioRam[0xa9] = 0;
+    ws_ioRam[0xaa] = ws_ioRam[0xab] = 0;
+
     rtcDataRegisterReadCount = 0;
 }
 
@@ -186,8 +190,6 @@ uint8_t __not_in_flash_func(cpu_readport)(uint8_t port) {
         case 0x94:
             ws_audio_sync();
             return ws_audio_port_read(port);
-        case 0xaa:
-            return 0xff;
         case 0xb3:    // ???
             if (ws_ioRam[0xb3] < 0x80)
                 return 0;
@@ -318,7 +320,8 @@ uint8_t __not_in_flash_func(cpu_readport)(uint8_t port) {
 void __not_in_flash_func(cpu_writeport)(uint32_t port, uint8_t value) {
     int w1;
 
-    if (ws_ioRam[port] == value && port != 0x52 && port != 0x69 && port != 0x6b)
+    if (ws_ioRam[port] == value && port != 0x52 && port != 0x69 && port != 0x6b &&
+        (port < 0xa4 || port > 0xa7))
         return;
 
     ws_ioRam[port] = value;
@@ -372,6 +375,18 @@ void __not_in_flash_func(cpu_writeport)(uint32_t port, uint8_t value) {
         case 0x94:
             ws_audio_sync();
             ws_audio_port_write(port, value);
+            break;
+        case 0xa4:
+        case 0xa5:
+            /* Writing either reload byte immediately reloads the HBlank counter. */
+            ws_ioRam[0xa8] = ws_ioRam[0xa4];
+            ws_ioRam[0xa9] = ws_ioRam[0xa5];
+            break;
+        case 0xa6:
+        case 0xa7:
+            /* Writing either reload byte immediately reloads the VBlank counter. */
+            ws_ioRam[0xaa] = ws_ioRam[0xa6];
+            ws_ioRam[0xab] = ws_ioRam[0xa7];
             break;
         case 0x48:    // DMA
 
