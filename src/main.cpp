@@ -73,6 +73,8 @@ static FATFS fs;
 bool reboot = false;
 semaphore vga_start_semaphore;
 
+volatile bool ws_backplane_enabled = true;
+
 alignas(4) uint8_t SCREEN1[144][224];
 alignas(4) uint8_t SCREEN2[144][224];
 alignas(4) uint8_t SCREEN3[144][224];
@@ -2148,6 +2150,7 @@ int main() {
             }
             // Center the native image in the 320x240 VGA viewport. Landscape
             // is 224x144 -> (48,48); portrait is 144x224 -> (88,8).
+            ws_backplane_enabled = !portrait;
             graphics_set_offset(portrait ? 88 : 48, portrait ? 8 : 48);
 
             // Portrait mode renders the native 224x144 frame into SCREEN1, then

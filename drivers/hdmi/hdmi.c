@@ -1,4 +1,5 @@
 #include "graphics.h"
+#include "wonderswan_backplane.h"
 #include <stdio.h>
 #include <string.h>
 #include "malloc.h"
@@ -229,15 +230,23 @@ static void __scratch_y("hdmi_driver") dma_handler_HDMI() {
         switch (graphics_mode) {
             case GRAPHICSMODE_DEFAULT:
             case VGA_320x240x256: {
+                /* The WonderSwan backplane is already stored as palette indices.
+                 * Copying one 320-byte row is cheaper than doing RGB work in the
+                 * scanout path; the game image below simply overwrites its window. */
+                if (ws_backplane_enabled)
+                    memcpy(output_buffer, ws_backplane + y * SCREEN_WIDTH, SCREEN_WIDTH);
+
                 //заполняем пространство сверху и снизу графического буфера
                 if (y < displayed_graphics_buffer_shift_y || y >= (displayed_graphics_buffer_shift_y + displayed_graphics_buffer_height)) {
-                    memset(output_buffer, 255,SCREEN_WIDTH);
+                    if (!ws_backplane_enabled)
+                        memset(output_buffer, 255,SCREEN_WIDTH);
                     break;
                 }
 
                 uint8_t* activ_buf_end = output_buffer + SCREEN_WIDTH;
                 //рисуем пространство слева от буфера
-                memset(output_buffer, 255, displayed_graphics_buffer_shift_x);
+                if (!ws_backplane_enabled)
+                    memset(output_buffer, 255, displayed_graphics_buffer_shift_x);
                 output_buffer += displayed_graphics_buffer_shift_x;
 
                 //рисуем сам видеобуфер+пространство справа
@@ -252,8 +261,11 @@ static void __scratch_y("hdmi_driver") dma_handler_HDMI() {
                         uint8_t i_color = *input_buffer++;
                         i_color = ((i_color & 0xf0) == 0xf0) ? 255 : i_color;
                         *output_buffer++ = i_color;
-                    } else
-                        *output_buffer++ = 255;
+                    } else {
+                        if (!ws_backplane_enabled)
+                            *output_buffer = 255;
+                        output_buffer++;
+                    }
                 }
 
                 break;
