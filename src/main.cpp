@@ -1338,21 +1338,27 @@ static bool game_palette_write(void) {
     char path[256];
     if (!game_palette_ini_path(path, sizeof(path))) return false;
     config_mkdirs();
-    char data[512];
+    if (!global_palette_valid) init_custom_palette_from_default();
+    char data[768];
     int len = snprintf(data, sizeof(data),
         "[palette]\r\n"
         "rgb0=%06lX\r\nrgb1=%06lX\r\nrgb2=%06lX\r\nrgb3=%06lX\r\n"
         "rgb4=%06lX\r\nrgb5=%06lX\r\nrgb6=%06lX\r\nrgb7=%06lX\r\n"
         "rgb8=%06lX\r\nrgb9=%06lX\r\nrgb10=%06lX\r\nrgb11=%06lX\r\n"
-        "rgb12=%06lX\r\nrgb13=%06lX\r\nrgb14=%06lX\r\nrgb15=%06lX\r\n",
-        (unsigned long)(ws_shades[0] & 0xffffffu), (unsigned long)(ws_shades[1] & 0xffffffu),
-        (unsigned long)(ws_shades[2] & 0xffffffu), (unsigned long)(ws_shades[3] & 0xffffffu),
-        (unsigned long)(ws_shades[4] & 0xffffffu), (unsigned long)(ws_shades[5] & 0xffffffu),
-        (unsigned long)(ws_shades[6] & 0xffffffu), (unsigned long)(ws_shades[7] & 0xffffffu),
-        (unsigned long)(ws_shades[8] & 0xffffffu), (unsigned long)(ws_shades[9] & 0xffffffu),
-        (unsigned long)(ws_shades[10] & 0xffffffu), (unsigned long)(ws_shades[11] & 0xffffffu),
-        (unsigned long)(ws_shades[12] & 0xffffffu), (unsigned long)(ws_shades[13] & 0xffffffu),
-        (unsigned long)(ws_shades[14] & 0xffffffu), (unsigned long)(ws_shades[15] & 0xffffffu));
+        "rgb12=%06lX\r\nrgb13=%06lX\r\nrgb14=%06lX\r\nrgb15=%06lX\r\n"
+        "[layers]\r\n"
+        "back=%u\r\nscreen1=%u\r\nsprites0=%u\r\nscreen2=%u\r\nsprites1=%u\r\n",
+        (unsigned long)(global_ws_shades[0] & 0xffffffu), (unsigned long)(global_ws_shades[1] & 0xffffffu),
+        (unsigned long)(global_ws_shades[2] & 0xffffffu), (unsigned long)(global_ws_shades[3] & 0xffffffu),
+        (unsigned long)(global_ws_shades[4] & 0xffffffu), (unsigned long)(global_ws_shades[5] & 0xffffffu),
+        (unsigned long)(global_ws_shades[6] & 0xffffffu), (unsigned long)(global_ws_shades[7] & 0xffffffu),
+        (unsigned long)(global_ws_shades[8] & 0xffffffu), (unsigned long)(global_ws_shades[9] & 0xffffffu),
+        (unsigned long)(global_ws_shades[10] & 0xffffffu), (unsigned long)(global_ws_shades[11] & 0xffffffu),
+        (unsigned long)(global_ws_shades[12] & 0xffffffu), (unsigned long)(global_ws_shades[13] & 0xffffffu),
+        (unsigned long)(global_ws_shades[14] & 0xffffffu), (unsigned long)(global_ws_shades[15] & 0xffffffu),
+        (unsigned)palette_index[PALETTE_BACK], (unsigned)palette_index[PALETTE_SCREEN1],
+        (unsigned)palette_index[PALETTE_SPRITES0], (unsigned)palette_index[PALETTE_SCREEN2],
+        (unsigned)palette_index[PALETTE_SPRITES1]);
     if (len <= 0 || (size_t)len >= sizeof(data)) return false;
     FIL file;
     if (f_open(&file, path, FA_CREATE_ALWAYS | FA_WRITE) != FR_OK) return false;
@@ -1367,7 +1373,7 @@ static bool game_palette_read(void) {
     if (!game_palette_ini_path(path, sizeof(path))) return false;
     FIL file;
     if (f_open(&file, path, FA_READ) != FR_OK) return false;
-    char data[512] = {};
+    char data[768] = {};
     UINT bytes_read = 0;
     const FRESULT fr = f_read(&file, data, sizeof(data) - 1, &bytes_read);
     f_close(&file);
@@ -1388,8 +1394,23 @@ static bool game_palette_read(void) {
         global_ws_shades[i] = (uint32_t)c[i];
     }
     global_palette_valid = true;
-    for (unsigned layer = 0; layer < PALETTE_LAYER_COUNT; ++layer) palette_index[layer] = PALETTE_CUSTOM;
-    apply_global_palette();
+
+    /* New files store only the five preset selectors in addition to the same
+       shared 16-colour Custom palette.  Old files have no [layers] section;
+       preserve their historical meaning by selecting Custom for every layer. */
+    unsigned modes[PALETTE_LAYER_COUNT];
+    const char *layers = strstr(data, "[layers]");
+    if (layers && sscanf(layers,
+            "[layers]\r\nback=%u\r\nscreen1=%u\r\nsprites0=%u\r\nscreen2=%u\r\nsprites1=%u",
+            &modes[PALETTE_BACK], &modes[PALETTE_SCREEN1], &modes[PALETTE_SPRITES0],
+            &modes[PALETTE_SCREEN2], &modes[PALETTE_SPRITES1]) == PALETTE_LAYER_COUNT) {
+        for (unsigned layer = 0; layer < PALETTE_LAYER_COUNT; ++layer)
+            palette_index[layer] = modes[layer] <= PALETTE_CUSTOM ? (uint8_t)modes[layer] : PALETTE_DEFAULT;
+    } else {
+        for (unsigned layer = 0; layer < PALETTE_LAYER_COUNT; ++layer)
+            palette_index[layer] = PALETTE_CUSTOM;
+    }
+    apply_selected_palettes();
     return true;
 }
 
@@ -1401,14 +1422,12 @@ static bool game_palette_action(void) {
         const FRESULT fr = f_unlink(path);
         if (fr == FR_OK || fr == FR_NO_FILE) {
             game_palette_linked = false;
-            apply_global_palette();
+            apply_selected_palettes();
             apply_current_palette_to_video();
         }
     } else if (game_palette_write()) {
-        /* A game palette is Custom by definition.  Keep the exact colours
-           that were just written as the editable Custom palette as well. */
-        capture_global_palette();
-        for (unsigned layer = 0; layer < PALETTE_LAYER_COUNT; ++layer) palette_index[layer] = PALETTE_CUSTOM;
+        /* The game file owns the current five selectors plus the one shared
+           16-colour Custom palette; linking must not force any layer to Custom. */
         game_palette_linked = true;
     }
     return false;
@@ -1874,8 +1893,10 @@ static void menu(bool game_loaded) {
                                 apply_audio_volume();
                             else if (changed && item->value == &audio_rate_shift)
                                 apply_audio_rate();
-                            else if (changed && (item->value == &palette_index[0] || item->value == &palette_index[1] || item->value == &palette_index[2] || item->value == &palette_index[3] || item->value == &palette_index[4]))
+                            else if (changed && (item->value == &palette_index[0] || item->value == &palette_index[1] || item->value == &palette_index[2] || item->value == &palette_index[3] || item->value == &palette_index[4])) {
                                 apply_selected_palettes();
+                                if (game_palette_linked) game_palette_write();
+                            }
                         }
                         break;
                     case RETURN:
@@ -2198,6 +2219,7 @@ int main() {
                         palette_index[layer] = (palette_index[layer] + 1) % (PALETTE_CUSTOM + 1);
                 }
                 apply_selected_palettes();
+                if (game_palette_linked) game_palette_write();
             }
 
             const int8_t palette_layer_cycle = palette_layer_cycle_requested;
@@ -2210,6 +2232,7 @@ int main() {
                     else
                         palette_index[layer] = (palette_index[layer] + 1) % (PALETTE_CUSTOM + 1);
                     apply_selected_palettes();
+                    if (game_palette_linked) game_palette_write();
                 }
             }
 
