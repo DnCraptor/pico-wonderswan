@@ -11,6 +11,7 @@
 #include <pico/stdlib.h>
 
 #include <graphics.h>
+#include "wonderswan_backplane.h"
 #include "audio.h"
 
 #include "nespad.h"
@@ -73,7 +74,8 @@ static FATFS fs;
 bool reboot = false;
 semaphore vga_start_semaphore;
 
-volatile bool ws_backplane_enabled = true;
+volatile bool ws_backplane_enabled = false;
+uint8_t backplane_mode = 0;   // 0=Auto (.ws only), 1=Off
 
 alignas(4) uint8_t SCREEN1[144][224];
 alignas(4) uint8_t SCREEN2[144][224];
@@ -1046,7 +1048,7 @@ static bool apply_audio_rate() {
 static bool mono_ws_rom_loaded(bool game_loaded);
 
 #define WS_CONFIG_MAGIC 0x31434657u /* WFC1 */
-#define WS_CONFIG_VERSION 6u
+#define WS_CONFIG_VERSION 7u
 
 typedef struct __attribute__((packed)) {
     uint32_t magic;
@@ -1059,6 +1061,7 @@ typedef struct __attribute__((packed)) {
     uint8_t frame_skip;
     uint8_t demo_duration;
     uint8_t palette_mode;
+    uint8_t backplane_mode;
     uint32_t custom_shades[16];
 } ws_config_t;
 
@@ -1161,6 +1164,7 @@ static bool load_config(void) {
     frame_skip = c.frame_skip <= 3 ? c.frame_skip : 0;
     demo_duration = c.demo_duration < count_of(demo_seconds) ? c.demo_duration : 0;
     palette_index = c.palette_mode <= PALETTE_CUSTOM ? c.palette_mode : PALETTE_DEFAULT;
+    backplane_mode = c.backplane_mode <= 1 ? c.backplane_mode : 0;
     for (unsigned i = 0; i < 16; ++i)
         global_ws_shades[i] = c.custom_shades[i] & 0x00ffffffu;
     global_palette_valid = true;
@@ -1181,6 +1185,7 @@ static bool save_config(void) {
     c.frame_skip = frame_skip;
     c.demo_duration = demo_duration;
     c.palette_mode = palette_index;
+    c.backplane_mode = backplane_mode;
     if (!global_palette_valid)
         init_custom_palette_from_default();
     for (unsigned i = 0; i < 16; ++i)
@@ -1608,6 +1613,7 @@ const MenuItem menu_items[] = {
         { "Emulate Sound: %s", ARRAY, &audio_rate_shift, &apply_audio_rate, 3, { "24 kHz", "12 kHz", "6 kHz ", "3 kHz " }},
         { "Frame skip: %s", ARRAY, &frame_skip, nullptr, 3, { "75 Hz", "50 Hz", "25 Hz", "Auto " }},
         { "Palette: %s", ARRAY, &palette_index, nullptr, 2, { "Default  ", "Cold     ", "Custom   " }},
+        { "Backplane: %s", ARRAY, &backplane_mode, nullptr, 1, { "Auto", "Off " }},
         {},
         //{ "Player 1: %s",        ARRAY, &player_1_input, 2, { "Keyboard ", "Gamepad 1", "Gamepad 2" }},
         //{ "Player 2: %s",        ARRAY, &player_2_input, 2, { "Keyboard ", "Gamepad 1", "Gamepad 2" }},
@@ -2026,6 +2032,12 @@ int main() {
         }
         ws_reset();
         apply_current_palette_to_video();
+#ifdef HDMI
+        if (mono_ws_rom_loaded(true)) {
+            for (unsigned i = 0; i < 208; ++i)
+                graphics_set_palette(ws_backplane_palette_slots[i], ws_backplane_palette[i]);
+        }
+#endif
 
         graphics_set_mode(GRAPHICSMODE_DEFAULT);
         demo_update_title();
@@ -2150,7 +2162,7 @@ int main() {
             }
             // Center the native image in the 320x240 VGA viewport. Landscape
             // is 224x144 -> (48,48); portrait is 144x224 -> (88,8).
-            ws_backplane_enabled = !portrait;
+            ws_backplane_enabled = (backplane_mode == 0) && mono_ws_rom_loaded(true) && !portrait;
             graphics_set_offset(portrait ? 88 : 48, portrait ? 8 : 48);
 
             // Portrait mode renders the native 224x144 frame into SCREEN1, then
