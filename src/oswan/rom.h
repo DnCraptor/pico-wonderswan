@@ -41,6 +41,7 @@ typedef struct ws_romHeaderStruct
 	uint8	developperId;
 	uint8	minimumSupportSystem;
 	uint8	cartId;
+	uint8	gameVersion;
 	uint8	romSize;
 	uint8	eepromSize;
 	uint8	additionnalCapabilities;

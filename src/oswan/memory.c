@@ -93,8 +93,13 @@ void __not_in_flash_func(cpu_writemem20)(uint32_t addr, uint8_t value) {
 //		ws_audio_write_byte(offset,value);
     } else
         // 1 - SRAM (cart)
-    if (bank == 1)
-        write8psram((1024 << 10) + (offset & sramAddressMask), value);
+    if (bank == 1) {
+        /* Cartridge SRAM is banked in 64 KiB pages by port C1.  The old
+           accessor masked only the 16-bit CPU offset, so carts larger than
+           64 KiB could never reach banks 1..n (Dicing Knight has 256 KiB). */
+        const uint32 sramAddress = ((((uint32)ws_ioRam[0xc1]) << 16) | offset) & sramAddressMask;
+        write8psram((1024 << 10) + sramAddress, value);
+    }
 //		ws_staticRam[offset&sramAddressMask]=value;
 
     // other banks are read-only
@@ -120,8 +125,10 @@ uint8_t __not_in_flash_func(cpu_readmem20)(uint32_t addr) {
             return internalRam[offset];
         return 0xff;
     }
-    if (bank == 1)
-        return read8psram((1024 << 10) + (offset & sramAddressMask));
+    if (bank == 1) {
+        const uint32 sramAddress = ((((uint32)ws_ioRam[0xc1]) << 16) | offset) & sramAddressMask;
+        return read8psram((1024 << 10) + sramAddress);
+    }
 
     if (__builtin_expect(bank < 16, 1))
         return ws_rom[romBankBase[bank] + offset];
