@@ -29,15 +29,15 @@ include(pico_sdk_import.cmake)
 project(wonderswan C CXX ASM)
 SET(BUILD_NAME "${PROJECT_NAME}")
 
-option(I2S "Enable I2S sound" ON)
+option(I2S "Enable I2S sound" OFF)
 option(I2S_CS4334 "Enable I2S CS4334 sound" OFF)
 option(HWAY "Enable hardware AY-3-8910 / PCM DAC output" OFF)
-option(VGA "Enable VGA" OFF)
+option(VGA "Enable VGA" ON)
 option(TFT "Enable TFT display" OFF)
 option(ILI9341 "Enable TFT ILI9341 display" OFF)
 option(HDMI "Enable HDMI display" OFF)
 option(TV "Enable TV composite output" OFF)
-option(SOFTTV "Enable TV soft composite output" ON)
+option(SOFTTV "Enable TV soft composite output" OFF)
 
 
 set(CMAKE_C_STANDARD 11)

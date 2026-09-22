@@ -1613,7 +1613,11 @@ const MenuItem menu_items[] = {
         { "Emulate Sound: %s", ARRAY, &audio_rate_shift, &apply_audio_rate, 3, { "24 kHz", "12 kHz", "6 kHz ", "3 kHz " }},
         { "Frame skip: %s", ARRAY, &frame_skip, nullptr, 3, { "75 Hz", "50 Hz", "25 Hz", "Auto " }},
         { "Palette: %s", ARRAY, &palette_index, nullptr, 2, { "Default  ", "Cold     ", "Custom   " }},
+#ifdef VGA
+        { "Backplane: %s", ARRAY, &backplane_mode, nullptr, 1, { "On ", "Off" }},
+#else
         { "Backplane: %s", ARRAY, &backplane_mode, nullptr, 1, { "Auto", "Off " }},
+#endif
         {},
         //{ "Player 1: %s",        ARRAY, &player_1_input, 2, { "Keyboard ", "Gamepad 1", "Gamepad 2" }},
         //{ "Player 2: %s",        ARRAY, &player_2_input, 2, { "Keyboard ", "Gamepad 1", "Gamepad 2" }},
@@ -2162,7 +2166,13 @@ int main() {
             }
             // Center the native image in the 320x240 VGA viewport. Landscape
             // is 224x144 -> (48,48); portrait is 144x224 -> (88,8).
+#ifdef VGA
+            // VGA backplane uses independent preconverted RGB222 data, so
+            // On applies to both monochrome .ws and color .wsc cartridges.
+            ws_backplane_enabled = (backplane_mode == 0) && !portrait;
+#else
             ws_backplane_enabled = (backplane_mode == 0) && mono_ws_rom_loaded(true) && !portrait;
+#endif
             graphics_set_offset(portrait ? 88 : 48, portrait ? 8 : 48);
 
             // Portrait mode renders the native 224x144 frame into SCREEN1, then
