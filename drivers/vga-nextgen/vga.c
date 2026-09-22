@@ -39,6 +39,13 @@ static int shift_picture = 0;
 
 static int visible_line_size = 320;
 
+/* Backplane pixels are already spatially dithered at the physical 640-pixel
+ * VGA width. Keep this tiny lookup in RAM: one logical output word is two
+ * independently quantized RGB222 pixels. */
+static uint16_t ws_backplane_vga_pairs[16] = {
+    0xc0c0, 0xd5c0, 0xeac0, 0xffc0, 0xc0d5, 0xd5d5, 0xead5, 0xffd5, 0xc0ea, 0xd5ea, 0xeaea, 0xffea, 0xc0ff, 0xd5ff, 0xeaff, 0xffff
+};
+
 
 static int dma_chan_ctrl;
 static int dma_chan;
@@ -187,8 +194,7 @@ void __time_critical_func() dma_handler_VGA() {
         line_number >= 0 && line_number < 240) {
         uint16_t *bp_out = (uint16_t *)(*output_buffer) + shift_picture / 2;
         const uint8_t *bp = ws_backplane_vga + (unsigned)line_number * 320u;
-        uint16_t *bp_palette = palette[((line_number & is_flash_line) +
-                                        (frame_number & is_flash_frame)) & 1u] + 16;
+        uint16_t *bp_palette = ws_backplane_vga_pairs;
         if (line_number < 48 || line_number >= 192) {
             for (unsigned x = 0; x < 320; ++x)
                 bp_out[x] = bp_palette[bp[x]];

@@ -2038,12 +2038,6 @@ int main() {
                 graphics_set_palette(ws_backplane_palette_slots[i], ws_backplane_palette[i]);
         }
 #endif
-#ifdef VGA
-        if (mono_ws_rom_loaded(true)) {
-            for (unsigned i = 0; i < 27; ++i)
-                graphics_set_palette((uint8_t)(16u + i), ws_backplane_vga_palette[i]);
-        }
-#endif
 
         graphics_set_mode(GRAPHICSMODE_DEFAULT);
         demo_update_title();
