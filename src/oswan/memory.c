@@ -169,12 +169,13 @@ int ws_memory_init(uint8 *rom, uint32 wsRomSize) {
     const uint32 sramSize = ws_rom_sramSize(ws_rom, romSize);
     const uint32 eepromSize = ws_rom_eepromSize(ws_rom, romSize);
     cartSramSize = sramSize; cartEepromSize = eepromSize;
-    /* size 0 must yield 0xFFFFFFFF (a full 64 KB bank), NOT 0.  The 6a25c00
-       "? : 0" guard collapsed an undeclared SRAM/EEPROM bank to a single byte,
-       hanging carts that use bank 1 as work RAM without declaring save memory
-       (worked before 6a25c00, where the mask was simply size - 1). */
-    sramAddressMask = sramSize - 1;
-    externalEepromAddressMask = eepromSize - 1;
+    /* Bank 1 is still a 64 KiB cartridge RAM window when the header declares
+       no SRAM.  Keep that legacy/work-RAM behaviour, but do not let C1 become
+       an address extension in that case: size - 1 would be 0xFFFFFFFF, so the
+       C1 banking added for >64 KiB SRAM would redirect accesses outside the
+       64 KiB window (GunPey writes C1 although it declares EEPROM, not SRAM). */
+    sramAddressMask = sramSize ? (sramSize - 1u) : 0xffffu;
+    externalEepromAddressMask = eepromSize - 1u;
     romAddressMask = romSize - 1;
     ws_memory_update_rom_banks();
 
