@@ -789,7 +789,7 @@ typedef struct __attribute__((__packed__)) {
     const void *value;
     menu_callback_t callback;
     uint8_t max_value;
-    char value_list[15][10];
+    char value_list[18][10];
 } MenuItem;
 
 int save_slot = 0;
@@ -1048,13 +1048,23 @@ bool toggle_color() {
 #endif
 enum palette_mode_e : uint8_t {
     PALETTE_DEFAULT = 0,
-    PALETTE_BGBR = 1,
-    PALETTE_YBGB = 2,
-    PALETTE_GBRB = 3,
-    PALETTE_RED_WINE = 4,
-    PALETTE_GREEN = 5,
-    PALETTE_BLUE = 6,
-    PALETTE_CUSTOM = 7
+    PALETTE_RED,
+    PALETTE_ORANGE,
+    PALETTE_GREEN,
+    PALETTE_BLUE,
+    PALETTE_PURPLE,
+    PALETTE_OGBP,
+    PALETTE_OGBR,
+    PALETTE_GBPR,
+    PALETTE_GBPO,
+    PALETTE_BPRO,
+    PALETTE_BROG,
+    PALETTE_PROG,
+    PALETTE_POGR,
+    PALETTE_ROGB,
+    PALETTE_ROGP,
+    PALETTE_RANDOM,
+    PALETTE_CUSTOM
 };
 enum palette_layer_e : uint8_t {
     PALETTE_BACK = 0, PALETTE_SCREEN0, PALETTE_SPRITES0, PALETTE_SCREEN1, PALETTE_SPRITES1, PALETTE_LAYER_COUNT
@@ -1108,51 +1118,112 @@ static bool game_palette_linked = false;
 static uint32_t global_ws_shades[16];
 static bool global_palette_valid = false;
 
-static const uint32_t bgbr_ws_shades[16] = {
-    0xf1fcff, 0xcff5ff, 0xb5f0ff, 0x87e3fa,
-    0x9fdfa9, 0x7cdd8c, 0x3cd554, 0x019901,
-    0xb47430, 0xb46f24, 0xaa5d0a, 0x884803,
-    0x880c0c, 0x690404, 0x3f0101, 0x0c0422
+static const uint32_t default_ws_shades[16] = {
+    0xf0f0f0, 0xe0e0e0, 0xd0d0d0, 0xc0c0c0,
+    0xb0b0b0, 0xa0a0a0, 0x909090, 0x808080,
+    0x707070, 0x606060, 0x505050, 0x404040,
+    0x303030, 0x202020, 0x101010, 0x000000
 };
-
-static const uint32_t ybgb_ws_shades[16] = {
-    0xfffbf1, 0xfdefca, 0xffd871, 0xffbf16,
-    0xcac0a5, 0x9a94df, 0xb9983f, 0xa57c0c,
-    0x274e13, 0x741b47, 0xb13737, 0x965f26,
-    0x133975, 0x062452, 0x01183c, 0x000b1b
-};
-
-static const uint32_t gbrb_ws_shades[16] = {
-    0xf1fff8, 0xc3ffe1, 0x86f8bf, 0x54e99e,
-    0xa5b2ca, 0x89a1cc, 0x6b8dca, 0x4c79c9,
-    0x997777, 0xb46f24, 0x9e4949, 0xa32e2e,
-    0x753b13, 0x5e2906, 0x491f03, 0x1b0b00
-};
-
-static const uint32_t red_wine_ws_shades[16] = {
+static const uint32_t red_ws_shades[16] = {
     0xfff1f1, 0xffd6d6, 0xffbebe, 0xfda2a2,
     0xff8989, 0xff6a6a, 0xff5353, 0xef3c3c,
     0xd72a2a, 0xb71919, 0x950e0e, 0x7f0404,
     0x750909, 0x560202, 0x3f0101, 0x0c0422
 };
-
-static const uint32_t green_ws_shades[16] = {
-    0xffffff, 0xc3ffc3, 0x9bf79b, 0x8fe48f,
-    0x83d183, 0x77be77, 0x6bab6b, 0x5f985f,
-    0x538553, 0x477247, 0x3c5f3c, 0x304c30,
-    0x243924, 0x182618, 0x0c130c, 0x000000
+static const uint32_t orange_ws_shades[16] = {
+    0xfffbf1, 0xfdefca, 0xffd871, 0xffbf16,
+    0xdba30f, 0xc69209, 0xb58504, 0xa17602,
+    0x926a00, 0x846208, 0x755707, 0x735302,
+    0x5b4202, 0x5b4202, 0x443100, 0x231900
 };
-
+static const uint32_t green_ws_shades[16] = {
+    0xf1fff8, 0xc3ffe1, 0x86f8bf, 0x54e99e,
+    0x41e291, 0x2acd7b, 0x27bb70, 0x20af66,
+    0x20ab64, 0x1c9e5c, 0x159051, 0x15824c,
+    0x117142, 0x0e6439, 0x085b32, 0x04361d
+};
 static const uint32_t blue_ws_shades[16] = {
-    0xffffff, 0xededff, 0xdadaff, 0xc8c8ff,
-    0xb6b6ff, 0xa3a3ff, 0x9191ff, 0x7f7fff,
-    0x6c6cff, 0x5c5ce9, 0x4c4cc2, 0x3d3d9b,
-    0x2e2e75, 0x1f1f4e, 0x0f0f27, 0x000000
+    0xf1fcff, 0xcff5ff, 0xb5f0ff, 0x87e3fa,
+    0x72dcf6, 0x61cfea, 0x56cae7, 0x44bddb,
+    0x3ab1cf, 0x2aa1c0, 0x2493b0, 0x1e8aa6,
+    0x19809a, 0x127088, 0x0a5062, 0x03232c
+};
+static const uint32_t purple_ws_shades[16] = {
+    0xebeef4, 0xd3d9e5, 0xc9d2e3, 0xbcc8de,
+    0xa5b2ca, 0x89a1cc, 0x6b8dca, 0x4c79c9,
+    0x396ac3, 0x2a5ebc, 0x2355b0, 0x1b489c,
+    0x123f95, 0x0d388b, 0x042460, 0x011334
+};
+static const uint32_t ogbp_ws_shades[16] = {
+    0xfffbf1, 0xfdefca, 0xffd871, 0xffbf16,
+    0x41e291, 0x2acd7b, 0x27bb70, 0x20af66,
+    0x3ab1cf, 0x2aa1c0, 0x2493b0, 0x1e8aa6,
+    0x123f95, 0x0d388b, 0x042460, 0x011334
+};
+static const uint32_t ogbr_ws_shades[16] = {
+    0xfffbf1, 0xfdefca, 0xffd871, 0xffbf16,
+    0x41e291, 0x2acd7b, 0x27bb70, 0x20af66,
+    0x3ab1cf, 0x2aa1c0, 0x2493b0, 0x1e8aa6,
+    0x750909, 0x560202, 0x3f0101, 0x0c0422
+};
+static const uint32_t gbpr_ws_shades[16] = {
+    0xf1fff8, 0xc3ffe1, 0x86f8bf, 0x54e99e,
+    0x72dcf6, 0x61cfea, 0x56cae7, 0x44bddb,
+    0x396ac3, 0x2a5ebc, 0x2355b0, 0x1b489c,
+    0x750909, 0x560202, 0x3f0101, 0x0c0422
+};
+static const uint32_t gbpo_ws_shades[16] = {
+    0xf1fff8, 0xc3ffe1, 0x86f8bf, 0x54e99e,
+    0x72dcf6, 0x61cfea, 0x56cae7, 0x44bddb,
+    0x396ac3, 0x2a5ebc, 0x2355b0, 0x1b489c,
+    0x5b4202, 0x5b4202, 0x443100, 0x231900
+};
+static const uint32_t bpro_ws_shades[16] = {
+    0xf1fcff, 0xcff5ff, 0xb5f0ff, 0x87e3fa,
+    0xa5b2ca, 0x89a1cc, 0x6b8dca, 0x4c79c9,
+    0xd72a2a, 0xb71919, 0x950e0e, 0x7f0404,
+    0x5b4202, 0x5b4202, 0x443100, 0x231900
+};
+static const uint32_t brog_ws_shades[16] = {
+    0xf1fcff, 0xcff5ff, 0xb5f0ff, 0x87e3fa,
+    0xff8989, 0xff6a6a, 0xff5353, 0xef3c3c,
+    0x926a00, 0x846208, 0x755707, 0x735302,
+    0x117142, 0x0e6439, 0x085b32, 0x04361d
+};
+static const uint32_t prog_ws_shades[16] = {
+    0xebeef4, 0xd3d9e5, 0xc9d2e3, 0xbcc8de,
+    0xff8989, 0xff6a6a, 0xff5353, 0xef3c3c,
+    0x926a00, 0x846208, 0x755707, 0x735302,
+    0x117142, 0x0e6439, 0x085b32, 0x04361d
+};
+static const uint32_t pogr_ws_shades[16] = {
+    0xebeef4, 0xd3d9e5, 0xc9d2e3, 0xbcc8de,
+    0xdba30f, 0xc69209, 0xb58504, 0xa17602,
+    0x20ab64, 0x1c9e5c, 0x159051, 0x15824c,
+    0x19809a, 0x127088, 0x0a5062, 0x03232c
+};
+static const uint32_t rogb_ws_shades[16] = {
+    0xfff1f1, 0xffd6d6, 0xffbebe, 0xfda2a2,
+    0xdba30f, 0xc69209, 0xb58504, 0xa17602,
+    0x20ab64, 0x1c9e5c, 0x159051, 0x15824c,
+    0x19809a, 0x127088, 0x0a5062, 0x03232c
+};
+static const uint32_t rogp_ws_shades[16] = {
+    0xfff1f1, 0xffd6d6, 0xffbebe, 0xfda2a2,
+    0xdba30f, 0xc69209, 0xb58504, 0xa17602,
+    0x20ab64, 0x1c9e5c, 0x159051, 0x15824c,
+    0x123f95, 0x0d388b, 0x042460, 0x011334
+};
+static const uint32_t random_ws_shades[16] = {
+    0xfff1f1, 0xfdefca, 0xc9d2e3, 0x54e99e,
+    0xdba30f, 0xff6a6a, 0x6b8dca, 0x44bddb,
+    0xd72a2a, 0x2a5ebc, 0x2493b0, 0x15824c,
+    0x19809a, 0x750909, 0x042460, 0x0c0422
 };
 
 static void init_custom_palette_from_default(void) {
     for (unsigned i = 0; i < 16; ++i)
-        global_ws_shades[i] = ws_colour_scheme_default[i] & 0x00ffffffu;
+        global_ws_shades[i] = default_ws_shades[i];
     global_palette_valid = true;
 }
 
@@ -1170,7 +1241,9 @@ static void apply_global_palette(void) {
 }
 
 static const char *const palette_mode_names[] = {
-    "Default", "BGBR", "YBGB", "GBRB", "Red wine", "Green", "Blue", "Custom"
+    "Default", "Red", "Orange", "Green", "Blue", "Purple",
+    "OGBP", "OGBR", "GBPR", "GBPO", "BPRO", "BROG", "PROG", "POGR", "ROGB", "ROGP",
+    "Random", "Custom"
 };
 
 static const char *const palette_layer_names[PALETTE_LAYER_COUNT] = {
@@ -1179,17 +1252,27 @@ static const char *const palette_layer_names[PALETTE_LAYER_COUNT] = {
 
 static const uint32_t *palette_colors_for_mode(uint8_t mode) {
     switch (mode) {
-        case PALETTE_BGBR: return bgbr_ws_shades;
-        case PALETTE_YBGB: return ybgb_ws_shades;
-        case PALETTE_GBRB: return gbrb_ws_shades;
-        case PALETTE_RED_WINE: return red_wine_ws_shades;
+        case PALETTE_RED: return red_ws_shades;
+        case PALETTE_ORANGE: return orange_ws_shades;
         case PALETTE_GREEN: return green_ws_shades;
         case PALETTE_BLUE: return blue_ws_shades;
+        case PALETTE_PURPLE: return purple_ws_shades;
+        case PALETTE_OGBP: return ogbp_ws_shades;
+        case PALETTE_OGBR: return ogbr_ws_shades;
+        case PALETTE_GBPR: return gbpr_ws_shades;
+        case PALETTE_GBPO: return gbpo_ws_shades;
+        case PALETTE_BPRO: return bpro_ws_shades;
+        case PALETTE_BROG: return brog_ws_shades;
+        case PALETTE_PROG: return prog_ws_shades;
+        case PALETTE_POGR: return pogr_ws_shades;
+        case PALETTE_ROGB: return rogb_ws_shades;
+        case PALETTE_ROGP: return rogp_ws_shades;
+        case PALETTE_RANDOM: return random_ws_shades;
         case PALETTE_CUSTOM:
             if (!global_palette_valid) init_custom_palette_from_default();
             return global_ws_shades;
         case PALETTE_DEFAULT:
-        default: return ws_colour_scheme_default;
+        default: return default_ws_shades;
     }
 }
 
@@ -1255,19 +1338,14 @@ static void config_mkdirs(void) {
     f_mkdir("/.config/wonderswan");
 }
 
-/* Keep the v10 on-disk palette IDs stable while allowing the menu order to
-   change.  This avoids invalidating existing wonderswan.conf files. */
+/* Palette selectors remain uint8_t fields in config v10; the expanded preset
+   set fits without changing the config layout or version. */
 static uint8_t palette_mode_from_config(uint8_t stored) {
-    static const uint8_t map[] = {
-        PALETTE_DEFAULT, PALETTE_BGBR, PALETTE_GREEN, PALETTE_BLUE,
-        PALETTE_YBGB, PALETTE_GBRB, PALETTE_CUSTOM, PALETTE_RED_WINE
-    };
-    return stored < count_of(map) ? map[stored] : PALETTE_DEFAULT;
+    return stored <= PALETTE_CUSTOM ? stored : PALETTE_DEFAULT;
 }
 
 static uint8_t palette_mode_to_config(uint8_t mode) {
-    static const uint8_t map[] = { 0, 1, 4, 5, 7, 2, 3, 6 };
-    return mode < count_of(map) ? map[mode] : 0;
+    return mode <= PALETTE_CUSTOM ? mode : PALETTE_DEFAULT;
 }
 
 static bool load_config(void) {
@@ -1289,7 +1367,7 @@ static bool load_config(void) {
         if (c.version == 9u) {
             /* v9 palette order was Default, Cold, Hot, Custom. */
             const auto migrate_v9_palette = [](uint8_t mode) -> uint8_t {
-                static const uint8_t map[] = { 0, 4, 5, 6 };
+                static const uint8_t map[] = { PALETTE_DEFAULT, PALETTE_BLUE, PALETTE_ORANGE, PALETTE_CUSTOM };
                 return mode < count_of(map) ? map[mode] : PALETTE_DEFAULT;
             };
             c.palette_mode = migrate_v9_palette(c.palette_mode);
@@ -1801,11 +1879,11 @@ const MenuItem menu_items[] = {
         { "Volume: %s", ARRAY, &audio_volume, &apply_audio_volume, 4, { "Mute", "12% ", "25% ", "50% ", "100%" }},
         { "Emulate Sound: %s", ARRAY, &audio_rate_shift, &apply_audio_rate, 3, { "24 kHz", "12 kHz", "6 kHz ", "3 kHz " }},
         { "Frame skip: %s", ARRAY, &frame_skip, nullptr, 3, { "75 Hz", "50 Hz", "25 Hz", "Auto " }},
-        { "Back:      %s", ARRAY, &palette_index[PALETTE_BACK],     nullptr, 7, { "Default ", "BGBR    ", "YBGB    ", "GBRB    ", "Red wine", "Green   ", "Blue    ", "Custom  " }},
-        { "Screen 0:  %s", ARRAY, &palette_index[PALETTE_SCREEN0],  nullptr, 7, { "Default ", "BGBR    ", "YBGB    ", "GBRB    ", "Red wine", "Green   ", "Blue    ", "Custom  " }},
-        { "Sprites 0: %s", ARRAY, &palette_index[PALETTE_SPRITES0], nullptr, 7, { "Default ", "BGBR    ", "YBGB    ", "GBRB    ", "Red wine", "Green   ", "Blue    ", "Custom  " }},
-        { "Screen 1:  %s", ARRAY, &palette_index[PALETTE_SCREEN1],  nullptr, 7, { "Default ", "BGBR    ", "YBGB    ", "GBRB    ", "Red wine", "Green   ", "Blue    ", "Custom  " }},
-        { "Sprites 1: %s", ARRAY, &palette_index[PALETTE_SPRITES1], nullptr, 7, { "Default ", "BGBR    ", "YBGB    ", "GBRB    ", "Red wine", "Green   ", "Blue    ", "Custom  " }},
+        { "Back:      %s", ARRAY, &palette_index[PALETTE_BACK],     nullptr, 17, { "Default ", "Red     ", "Orange  ", "Green   ", "Blue    ", "Purple  ", "OGBP    ", "OGBR    ", "GBPR    ", "GBPO    ", "BPRO    ", "BROG    ", "PROG    ", "POGR    ", "ROGB    ", "ROGP    ", "Random  ", "Custom  " }},
+        { "Screen 0:  %s", ARRAY, &palette_index[PALETTE_SCREEN0],  nullptr, 17, { "Default ", "Red     ", "Orange  ", "Green   ", "Blue    ", "Purple  ", "OGBP    ", "OGBR    ", "GBPR    ", "GBPO    ", "BPRO    ", "BROG    ", "PROG    ", "POGR    ", "ROGB    ", "ROGP    ", "Random  ", "Custom  " }},
+        { "Sprites 0: %s", ARRAY, &palette_index[PALETTE_SPRITES0], nullptr, 17, { "Default ", "Red     ", "Orange  ", "Green   ", "Blue    ", "Purple  ", "OGBP    ", "OGBR    ", "GBPR    ", "GBPO    ", "BPRO    ", "BROG    ", "PROG    ", "POGR    ", "ROGB    ", "ROGP    ", "Random  ", "Custom  " }},
+        { "Screen 1:  %s", ARRAY, &palette_index[PALETTE_SCREEN1],  nullptr, 17, { "Default ", "Red     ", "Orange  ", "Green   ", "Blue    ", "Purple  ", "OGBP    ", "OGBR    ", "GBPR    ", "GBPO    ", "BPRO    ", "BROG    ", "PROG    ", "POGR    ", "ROGB    ", "ROGP    ", "Random  ", "Custom  " }},
+        { "Sprites 1: %s", ARRAY, &palette_index[PALETTE_SPRITES1], nullptr, 17, { "Default ", "Red     ", "Orange  ", "Green   ", "Blue    ", "Purple  ", "OGBP    ", "OGBR    ", "GBPR    ", "GBPO    ", "BPRO    ", "BROG    ", "PROG    ", "POGR    ", "ROGB    ", "ROGP    ", "Random  ", "Custom  " }},
 #ifdef VGA
         { "Backplane: %s", ARRAY, &backplane_mode, nullptr, 1, { "On ", "Off" }},
 #else
