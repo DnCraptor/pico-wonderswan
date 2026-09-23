@@ -123,6 +123,7 @@ static volatile bool backplane_toggle_requested = false;
 static volatile int8_t palette_cycle_requested = 0;
 static volatile int8_t palette_layer_cycle_requested = 0;
 static volatile int8_t palette_all_set_requested = -1;
+static volatile bool palette_shuffle_requested = false;
 
 static bool portrait_enabled() {
     bool portrait;
@@ -222,8 +223,12 @@ void process_kbd_report(hid_keyboard_report_t const* report, hid_keyboard_report
         }
         if (isInReport(report, HID_KEY_F6) && !isInReport(prev_report, HID_KEY_F6))
             palette_all_set_requested = 0;
-        if (isInReport(report, HID_KEY_F7) && !isInReport(prev_report, HID_KEY_F7))
-            palette_all_set_requested = 1;
+        if (isInReport(report, HID_KEY_F7) && !isInReport(prev_report, HID_KEY_F7)) {
+            if (palette_shift)
+                palette_shuffle_requested = true;
+            else
+                palette_all_set_requested = 1;
+        }
         if (isInReport(report, HID_KEY_F8) && !isInReport(prev_report, HID_KEY_F8))
             palette_all_set_requested = 2;
     }
@@ -2410,6 +2415,15 @@ int main() {
                     save_config();
                     show_palette_overlay(layer);
                 }
+            }
+
+            if (palette_shuffle_requested) {
+                palette_shuffle_requested = false;
+                for (unsigned layer = 0; layer < PALETTE_LAYER_COUNT; ++layer)
+                    palette_index[layer] = (uint8_t)(random_palette_next() % (PALETTE_CUSTOM + 1));
+                apply_selected_palettes();
+                if (game_palette_linked) game_palette_write();
+                save_config();
             }
 
             const int8_t palette_all_set = palette_all_set_requested;
