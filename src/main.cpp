@@ -2573,8 +2573,11 @@ int main() {
         apply_current_palette_to_video();
 #ifdef HDMI
         if (mono_ws_rom_loaded(true)) {
+            const uint32_t *backplane_palette = portrait_enabled()
+                ? ws_backplane_hdmi_portrait_palette
+                : ws_backplane_palette;
             for (unsigned i = 0; i < 144; ++i)
-                graphics_set_palette(ws_backplane_palette_slots[i], ws_backplane_palette[i]);
+                graphics_set_palette(ws_backplane_palette_slots[i], backplane_palette[i]);
         }
 #endif
 
@@ -2696,7 +2699,8 @@ int main() {
             ws_backplane_enabled = (backplane_mode == 0);
             ws_backplane_portrait = portrait;
 #else
-            ws_backplane_enabled = (backplane_mode == 0) && mono_ws_rom_loaded(true) && !portrait;
+            ws_backplane_enabled = (backplane_mode == 0) && mono_ws_rom_loaded(true);
+            ws_backplane_portrait = portrait;
 #endif
             graphics_overlay_palette_index = ws_backplane_enabled ? 15 : 0;
             graphics_set_offset(portrait ? 88 : 48, portrait ? 8 : 48);

@@ -248,8 +248,10 @@ static void __scratch_y("hdmi_driver") dma_handler_HDMI() {
                 /* The WonderSwan backplane is already stored as palette indices.
                  * Copying one 320-byte row is cheaper than doing RGB work in the
                  * scanout path; the game image below simply overwrites its window. */
-                if (ws_backplane_enabled)
-                    hdmi_irq_copy(output_buffer, ws_backplane + y * SCREEN_WIDTH, SCREEN_WIDTH);
+                if (ws_backplane_enabled) {
+                    const uint8_t *bp_image = ws_backplane_portrait ? ws_backplane_hdmi_portrait : ws_backplane;
+                    hdmi_irq_copy(output_buffer, bp_image + y * SCREEN_WIDTH, SCREEN_WIDTH);
+                }
 
                 //заполняем пространство сверху и снизу графического буфера
                 if (y < displayed_graphics_buffer_shift_y || y >= (displayed_graphics_buffer_shift_y + displayed_graphics_buffer_height)) {
