@@ -370,7 +370,7 @@ void __time_critical_func() dma_handler_VGA() {
         /* Each uint16_t carries two VGA pixels. Duplicate the 8-bit sample
          * so HSYNC/VSYNC bits 7:6 remain valid in both pixels. */
         const uint16_t overlay_color =
-            (uint16_t)(txt_palette[15] & 0xffu) * 0x0101u;
+            (uint16_t)(txt_palette[graphics_overlay_palette_index] & 0xffu) * 0x0101u;
         const unsigned glyph_row = (unsigned)y - 2u;
 
         /* The same VGA line template is reused for later scanlines. Clear
@@ -404,7 +404,7 @@ void __time_critical_func() dma_handler_VGA() {
         if (text_x >= 0) {
             uint16_t *dst = (uint16_t *)(*output_buffer) + shift_picture / 2 + text_x;
             const uint16_t overlay_color =
-                (uint16_t)(txt_palette[15] & 0xffu) * 0x0101u;
+                (uint16_t)(txt_palette[graphics_overlay_palette_index] & 0xffu) * 0x0101u;
             const unsigned glyph_row = (unsigned)(output_y - (N_lines_visible / 2 - 10));
             for (const char *q = graphics_demo_overlay_text; *q; ++q) {
                 uint8_t bits = font_6x8[(uint8_t)*q * 8u + glyph_row];

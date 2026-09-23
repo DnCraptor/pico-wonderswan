@@ -6,6 +6,7 @@ volatile bool graphics_fps_overlay_enabled = false;
 char graphics_fps_overlay_text[8] = "--.-";
 volatile bool graphics_demo_overlay_enabled = false;
 char graphics_demo_overlay_text[53] = "";
+volatile uint8_t graphics_overlay_palette_index = 0;
 
 void graphics_set_fps_overlay(const bool enabled, const uint16_t fps_x10) {
     /* Disable while replacing the string: core 1 may be scanning it. */

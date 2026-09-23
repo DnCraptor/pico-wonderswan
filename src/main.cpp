@@ -321,6 +321,7 @@ static uint64_t demo_game_started_at = 0;
 static char demo_current_name[79] = { 0 };
 static uint8_t demo_duration = 0;
 static const uint16_t demo_seconds[] = { 15, 30, 45, 60, 120, 180, 300, 600 };
+static uint64_t palette_overlay_until = 0;
 
 static void demo_update_title(void) {
     const bool visible = demo_active && demo_current_name[0] &&
@@ -1056,7 +1057,7 @@ enum palette_mode_e : uint8_t {
     PALETTE_CUSTOM = 7
 };
 enum palette_layer_e : uint8_t {
-    PALETTE_BACK = 0, PALETTE_SCREEN1, PALETTE_SPRITES0, PALETTE_SCREEN2, PALETTE_SPRITES1, PALETTE_LAYER_COUNT
+    PALETTE_BACK = 0, PALETTE_SCREEN0, PALETTE_SPRITES0, PALETTE_SCREEN1, PALETTE_SPRITES1, PALETTE_LAYER_COUNT
 };
 uint8_t palette_index[PALETTE_LAYER_COUNT] = { PALETTE_DEFAULT, PALETTE_DEFAULT, PALETTE_DEFAULT, PALETTE_DEFAULT, PALETTE_DEFAULT };
 bool show_fps = false;
@@ -1168,6 +1169,14 @@ static void apply_global_palette(void) {
         ws_shades[i] = global_ws_shades[i];
 }
 
+static const char *const palette_mode_names[] = {
+    "Default", "BGBR", "YBGB", "GBRB", "Red wine", "Green", "Blue", "Custom"
+};
+
+static const char *const palette_layer_names[PALETTE_LAYER_COUNT] = {
+    "Back", "Screen 0", "Sprites 0", "Screen 1", "Sprites 1"
+};
+
 static const uint32_t *palette_colors_for_mode(uint8_t mode) {
     switch (mode) {
         case PALETTE_BGBR: return bgbr_ws_shades;
@@ -1202,6 +1211,24 @@ static void apply_selected_palettes(void) {
        palette editor and per-game Custom INI. */
     const uint32_t *back = palette_colors_for_mode(palette_index[PALETTE_BACK]);
     for (unsigned i = 0; i < 16; ++i) ws_shades[i] = back[i] & 0x00ffffffu;
+
+}
+
+static void show_palette_overlay(unsigned layer) {
+    if (layer >= PALETTE_LAYER_COUNT) return;
+
+    char title[53];
+    snprintf(title, sizeof(title), "%s -> %s",
+             palette_layer_names[layer],
+             palette_mode_names[palette_index[layer]]);
+    graphics_set_demo_overlay(true, title);
+    palette_overlay_until = time_us_64() + 2000000ull;
+}
+
+static void update_palette_overlay(void) {
+    if (!palette_overlay_until || time_us_64() < palette_overlay_until) return;
+    palette_overlay_until = 0;
+    demo_update_title();
 }
 
 static void apply_current_palette_to_video(void) {
@@ -1380,8 +1407,8 @@ static bool game_palette_write(void) {
         (unsigned long)(global_ws_shades[10] & 0xffffffu), (unsigned long)(global_ws_shades[11] & 0xffffffu),
         (unsigned long)(global_ws_shades[12] & 0xffffffu), (unsigned long)(global_ws_shades[13] & 0xffffffu),
         (unsigned long)(global_ws_shades[14] & 0xffffffu), (unsigned long)(global_ws_shades[15] & 0xffffffu),
-        (unsigned)palette_index[PALETTE_BACK], (unsigned)palette_index[PALETTE_SCREEN1],
-        (unsigned)palette_index[PALETTE_SPRITES0], (unsigned)palette_index[PALETTE_SCREEN2],
+        (unsigned)palette_index[PALETTE_BACK], (unsigned)palette_index[PALETTE_SCREEN0],
+        (unsigned)palette_index[PALETTE_SPRITES0], (unsigned)palette_index[PALETTE_SCREEN1],
         (unsigned)palette_index[PALETTE_SPRITES1]);
     if (len <= 0 || (size_t)len >= sizeof(data)) return false;
     FIL file;
@@ -1426,8 +1453,8 @@ static bool game_palette_read(void) {
     const char *layers = strstr(data, "[layers]");
     if (layers && sscanf(layers,
             "[layers]\r\nback=%u\r\nscreen1=%u\r\nsprites0=%u\r\nscreen2=%u\r\nsprites1=%u",
-            &modes[PALETTE_BACK], &modes[PALETTE_SCREEN1], &modes[PALETTE_SPRITES0],
-            &modes[PALETTE_SCREEN2], &modes[PALETTE_SPRITES1]) == PALETTE_LAYER_COUNT) {
+            &modes[PALETTE_BACK], &modes[PALETTE_SCREEN0], &modes[PALETTE_SPRITES0],
+            &modes[PALETTE_SCREEN1], &modes[PALETTE_SPRITES1]) == PALETTE_LAYER_COUNT) {
         for (unsigned layer = 0; layer < PALETTE_LAYER_COUNT; ++layer)
             palette_index[layer] = modes[layer] <= PALETTE_CUSTOM ? (uint8_t)modes[layer] : PALETTE_DEFAULT;
     } else {
@@ -1775,9 +1802,9 @@ const MenuItem menu_items[] = {
         { "Emulate Sound: %s", ARRAY, &audio_rate_shift, &apply_audio_rate, 3, { "24 kHz", "12 kHz", "6 kHz ", "3 kHz " }},
         { "Frame skip: %s", ARRAY, &frame_skip, nullptr, 3, { "75 Hz", "50 Hz", "25 Hz", "Auto " }},
         { "Back:      %s", ARRAY, &palette_index[PALETTE_BACK],     nullptr, 7, { "Default ", "BGBR    ", "YBGB    ", "GBRB    ", "Red wine", "Green   ", "Blue    ", "Custom  " }},
-        { "Screen 1:  %s", ARRAY, &palette_index[PALETTE_SCREEN1],  nullptr, 7, { "Default ", "BGBR    ", "YBGB    ", "GBRB    ", "Red wine", "Green   ", "Blue    ", "Custom  " }},
+        { "Screen 0:  %s", ARRAY, &palette_index[PALETTE_SCREEN0],  nullptr, 7, { "Default ", "BGBR    ", "YBGB    ", "GBRB    ", "Red wine", "Green   ", "Blue    ", "Custom  " }},
         { "Sprites 0: %s", ARRAY, &palette_index[PALETTE_SPRITES0], nullptr, 7, { "Default ", "BGBR    ", "YBGB    ", "GBRB    ", "Red wine", "Green   ", "Blue    ", "Custom  " }},
-        { "Screen 2:  %s", ARRAY, &palette_index[PALETTE_SCREEN2],  nullptr, 7, { "Default ", "BGBR    ", "YBGB    ", "GBRB    ", "Red wine", "Green   ", "Blue    ", "Custom  " }},
+        { "Screen 1:  %s", ARRAY, &palette_index[PALETTE_SCREEN1],  nullptr, 7, { "Default ", "BGBR    ", "YBGB    ", "GBRB    ", "Red wine", "Green   ", "Blue    ", "Custom  " }},
         { "Sprites 1: %s", ARRAY, &palette_index[PALETTE_SPRITES1], nullptr, 7, { "Default ", "BGBR    ", "YBGB    ", "GBRB    ", "Red wine", "Green   ", "Blue    ", "Custom  " }},
 #ifdef VGA
         { "Backplane: %s", ARRAY, &backplane_mode, nullptr, 1, { "On ", "Off" }},
@@ -2257,8 +2284,11 @@ int main() {
                         palette_index[layer] = (palette_index[layer] + 1) % (PALETTE_CUSTOM + 1);
                     apply_selected_palettes();
                     if (game_palette_linked) game_palette_write();
+                    show_palette_overlay(layer);
                 }
             }
+
+            update_palette_overlay();
 
             if (palette_f12_requested) {
                 palette_f12_requested = false;
@@ -2369,6 +2399,7 @@ int main() {
 #else
             ws_backplane_enabled = (backplane_mode == 0) && mono_ws_rom_loaded(true) && !portrait;
 #endif
+            graphics_overlay_palette_index = ws_backplane_enabled ? 15 : 0;
             graphics_set_offset(portrait ? 88 : 48, portrait ? 8 : 48);
 
             // Portrait mode renders the native 224x144 frame into SCREEN1, then
