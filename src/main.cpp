@@ -118,6 +118,7 @@ static bool keyboard_9 = false, keyboard_0 = false;
 /* Palette editor owns hexadecimal key presses while it is open. */
 static volatile bool palette_editor_active = false;
 static volatile int8_t palette_hex_key = -1;
+static volatile bool palette_tab_requested = false;
 static volatile bool palette_f12_requested = false;
 static volatile bool backplane_toggle_requested = false;
 static volatile int8_t palette_cycle_requested = 0;
@@ -244,6 +245,9 @@ void process_kbd_report(hid_keyboard_report_t const* report, hid_keyboard_report
     /* F12 is an edge-triggered direct palette-editor toggle. */
     if (isInReport(report, HID_KEY_F12) && !isInReport(prev_report, HID_KEY_F12))
         palette_f12_requested = true;
+
+    if (palette_editor_active && isInReport(report, HID_KEY_TAB) && !isInReport(prev_report, HID_KEY_TAB))
+        palette_tab_requested = true;
 
     if (palette_editor_active) {
         int8_t hex = -1;
@@ -1372,14 +1376,30 @@ static void apply_selected_palette(void) {
     apply_selected_palettes();
 }
 
-static void ensure_custom_palette_for_edit(void) {
-    if (palette_index[PALETTE_BACK] == PALETTE_CUSTOM)
+static void ensure_custom_palette_for_edit(unsigned layer) {
+    if (layer >= PALETTE_LAYER_COUNT || palette_index[layer] == PALETTE_CUSTOM)
         return;
 
-    /* The editor edits the shared Custom palette and previews it through the
-       Back bank; the other four layer selectors remain independent. */
+    /* The first edit turns the currently displayed source into Custom and
+       assigns Custom to that source layer.  The other four selectors remain
+       untouched. */
     capture_global_palette();
-    palette_index[PALETTE_BACK] = PALETTE_CUSTOM;
+    palette_index[layer] = PALETTE_CUSTOM;
+}
+
+static void palette_editor_load_layer(unsigned layer) {
+    if (layer >= PALETTE_LAYER_COUNT) return;
+    const uint32_t *colors = palette_colors_for_mode(palette_index[layer]);
+    for (unsigned i = 0; i < 16; ++i)
+        ws_shades[i] = colors[i] & 0x00ffffffu;
+}
+
+static void palette_editor_update_title(unsigned layer) {
+    if (layer >= PALETTE_LAYER_COUNT) return;
+    char title[53];
+    snprintf(title, sizeof(title), "%s: %s",
+             palette_layer_names[layer], palette_mode_names[palette_index[layer]]);
+    graphics_set_demo_overlay(true, title);
 }
 
 
@@ -1762,19 +1782,23 @@ static bool palette_repeat(bool level, palette_repeat_t *state) {
 static bool show_current_palettes(void) {
     uint8_t *buffer = (uint8_t *)SCREEN3;
     unsigned selected = 0;
+    unsigned source_layer = PALETTE_BACK;
     int edit_channel = -1;
     int hex_digit = -1;
 
     palette_hex_key = -1;
+    palette_tab_requested = false;
     palette_editor_active = true;
     graphics_set_buffer(buffer, 224, 144);
     graphics_set_mode(GRAPHICSMODE_DEFAULT);
+    palette_editor_load_layer(source_layer);
     palette_preview_apply_palette();
+    palette_editor_update_title(source_layer);
     palette_preview_draw(buffer, selected, edit_channel);
 
     /* Editor-local logical controls.  Keyboard works without a gamepad:
-       arrows navigate, Enter/X = accept/edit, Esc/Z = back/close.  Keep
-       physical START as an additional close action. */
+       arrows navigate, Enter/X = accept/edit, Esc/Z = back/close, Tab cycles
+       the five palette source layers.  Keep physical START as close. */
     bool accept_armed = false, back_armed = false, start_armed = false;
     uint64_t accept_released = 0, back_released = 0, start_released = 0;
     palette_repeat_t rep_left = {}, rep_right = {}, rep_up = {}, rep_down = {};
@@ -1782,18 +1806,26 @@ static bool show_current_palettes(void) {
     for (;;) {
         if (palette_f12_requested) {
             palette_f12_requested = false;
-            palette_preview_apply_palette();
-            if (game_palette_linked) {
-                game_palette_write();
-            } else {
-                if (palette_index[PALETTE_BACK] == PALETTE_CUSTOM)
-                        capture_global_palette();
-                save_config();
-            }
+            if (game_palette_linked) game_palette_write();
+            else save_config();
+            apply_selected_palettes();
             palette_editor_active = false;
             palette_hex_key = -1;
+            palette_tab_requested = false;
+            demo_update_title();
             graphics_set_mode(GRAPHICSMODE_DEFAULT);
             return true;
+        }
+
+        if (palette_tab_requested) {
+            palette_tab_requested = false;
+            source_layer = (source_layer + 1u) % PALETTE_LAYER_COUNT;
+            edit_channel = -1;
+            hex_digit = -1;
+            palette_editor_load_layer(source_layer);
+            palette_preview_apply_palette();
+            palette_editor_update_title(source_layer);
+            palette_preview_draw(buffer, selected, edit_channel);
         }
 
         const bool left_level  = gamepad1_bits.left;
@@ -1820,7 +1852,8 @@ static bool show_current_palettes(void) {
             palette_hex_key = -1;
             if (hex_digit < 0) hex_digit = 0;
             const unsigned shift = (unsigned)(5 - hex_digit) * 4u;
-            ensure_custom_palette_for_edit();
+            ensure_custom_palette_for_edit(source_layer);
+            palette_editor_update_title(source_layer);
             uint32_t rgb = ws_shades[selected] & 0x00ffffffu;
             rgb = (rgb & ~(0x0fu << shift)) | ((uint32_t)typed_hex << shift);
             ws_shades[selected] = rgb;
@@ -1851,16 +1884,13 @@ static bool show_current_palettes(void) {
                 hex_digit = -1;
                 redraw = true;
             } else if (back || close) {
-                palette_preview_apply_palette();
-                if (game_palette_linked) {
-                    game_palette_write();
-                } else {
-                    if (palette_index[PALETTE_BACK] == PALETTE_CUSTOM)
-                        capture_global_palette();
-                    save_config();
-                }
+                if (game_palette_linked) game_palette_write();
+                else save_config();
+                apply_selected_palettes();
                 palette_editor_active = false;
                 palette_hex_key = -1;
+                palette_tab_requested = false;
+                demo_update_title();
                 graphics_set_mode(GRAPHICSMODE_DEFAULT);
                 return true;
             }
@@ -1875,7 +1905,8 @@ static bool show_current_palettes(void) {
                 redraw = true;
             } else if (up || down) {
                 const unsigned shift = (unsigned)(2 - edit_channel) * 8u;
-                ensure_custom_palette_for_edit();
+                ensure_custom_palette_for_edit(source_layer);
+                palette_editor_update_title(source_layer);
                 uint32_t rgb = ws_shades[selected] & 0x00ffffffu;
                 unsigned value = (rgb >> shift) & 0xffu;
                 if (up)
@@ -1894,25 +1925,22 @@ static bool show_current_palettes(void) {
                 hex_digit = -1;
                 redraw = true;
             } else if (close) {
-                palette_preview_apply_palette();
-                if (game_palette_linked) {
-                    game_palette_write();
-                } else {
-                    if (palette_index[PALETTE_BACK] == PALETTE_CUSTOM)
-                        capture_global_palette();
-                    save_config();
-                }
+                if (game_palette_linked) game_palette_write();
+                else save_config();
+                apply_selected_palettes();
                 palette_editor_active = false;
                 palette_hex_key = -1;
+                palette_tab_requested = false;
+                demo_update_title();
                 graphics_set_mode(GRAPHICSMODE_DEFAULT);
                 return true;
             }
         }
 
         if (palette_changed) {
-            /* Push the changed RGB entry before drawing the indexed preview.
-               The next scan of this buffer therefore sees the new colour on
-               the very same edit step. */
+            /* Custom is one shared editable palette.  Once the selected layer
+               has switched to Custom, keep its canonical RGB array in sync. */
+            capture_global_palette();
             palette_preview_apply_palette();
         }
         if (redraw)
