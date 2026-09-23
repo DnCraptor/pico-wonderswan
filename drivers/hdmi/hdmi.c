@@ -186,6 +186,21 @@ static void pio_set_x(PIO pio, const int sm, uint32_t v) {
 
 static void hdmi_restore_ui_palette(void);
 
+/* Keep the scanout IRQ independent of libc/XIP.  These byte loops live in
+ * scratch Y together with the HDMI DMA handler; volatile destinations also
+ * prevent GCC from folding them back into memset()/memcpy() calls. */
+static void __scratch_y("hdmi_driver") hdmi_irq_fill(uint8_t *dst, uint8_t value, size_t count) {
+    volatile uint8_t *out = dst;
+    while (count--)
+        *out++ = value;
+}
+
+static void __scratch_y("hdmi_driver") hdmi_irq_copy(uint8_t *dst, const uint8_t *src, size_t count) {
+    volatile uint8_t *out = dst;
+    while (count--)
+        *out++ = *src++;
+}
+
 static void __scratch_y("hdmi_driver") dma_handler_HDMI() {
     static uint32_t inx_buf_dma;
     static uint line = 0;
@@ -234,19 +249,19 @@ static void __scratch_y("hdmi_driver") dma_handler_HDMI() {
                  * Copying one 320-byte row is cheaper than doing RGB work in the
                  * scanout path; the game image below simply overwrites its window. */
                 if (ws_backplane_enabled)
-                    memcpy(output_buffer, ws_backplane + y * SCREEN_WIDTH, SCREEN_WIDTH);
+                    hdmi_irq_copy(output_buffer, ws_backplane + y * SCREEN_WIDTH, SCREEN_WIDTH);
 
                 //заполняем пространство сверху и снизу графического буфера
                 if (y < displayed_graphics_buffer_shift_y || y >= (displayed_graphics_buffer_shift_y + displayed_graphics_buffer_height)) {
                     if (!ws_backplane_enabled)
-                        memset(output_buffer, 255,SCREEN_WIDTH);
+                        hdmi_irq_fill(output_buffer, 255, SCREEN_WIDTH);
                     break;
                 }
 
                 uint8_t* activ_buf_end = output_buffer + SCREEN_WIDTH;
                 //рисуем пространство слева от буфера
                 if (!ws_backplane_enabled)
-                    memset(output_buffer, 255, displayed_graphics_buffer_shift_x);
+                    hdmi_irq_fill(output_buffer, 255, displayed_graphics_buffer_shift_x);
                 output_buffer += displayed_graphics_buffer_shift_x;
 
                 //рисуем сам видеобуфер+пространство справа
@@ -313,7 +328,8 @@ static void __scratch_y("hdmi_driver") dma_handler_HDMI() {
          * last 8-pixel row of the physical 320x240 output. */
         if (graphics_mode == GRAPHICSMODE_DEFAULT && graphics_demo_overlay_enabled &&
             y >= SCREEN_HEIGHT - 10 && y < SCREEN_HEIGHT - 2) {
-            const size_t len = strlen(graphics_demo_overlay_text);
+            size_t len = 0;
+            while (graphics_demo_overlay_text[len]) ++len;
             const int text_x = (SCREEN_WIDTH - (int)len * 6) / 2;
             if (text_x >= 0) {
                 uint8_t *dst = activ_buf + 72 + text_x;
@@ -336,9 +352,9 @@ static void __scratch_y("hdmi_driver") dma_handler_HDMI() {
 
         // --|_|---|_|---|_|----
         //---|___________|-----
-        memset(activ_buf + 48,BASE_HDMI_CTRL_INX, 24);
-        memset(activ_buf,BASE_HDMI_CTRL_INX + 1, 48);
-        memset(activ_buf + 392,BASE_HDMI_CTRL_INX, 8);
+        hdmi_irq_fill(activ_buf + 48, BASE_HDMI_CTRL_INX, 24);
+        hdmi_irq_fill(activ_buf, BASE_HDMI_CTRL_INX + 1, 48);
+        hdmi_irq_fill(activ_buf + 392, BASE_HDMI_CTRL_INX, 8);
 
         //без выравнивания
         // --|_|---|_|---|_|----
@@ -352,8 +368,8 @@ static void __scratch_y("hdmi_driver") dma_handler_HDMI() {
             //для выравнивания синхры
             // --|_|---|_|---|_|----
             //---|___________|-----
-            memset(activ_buf + 48,BASE_HDMI_CTRL_INX + 2, 352);
-            memset(activ_buf,BASE_HDMI_CTRL_INX + 3, 48);
+            hdmi_irq_fill(activ_buf + 48, BASE_HDMI_CTRL_INX + 2, 352);
+            hdmi_irq_fill(activ_buf, BASE_HDMI_CTRL_INX + 3, 48);
             //без выравнивания
             // --|_|---|_|---|_|----
             //-------|___________|----
@@ -365,8 +381,8 @@ static void __scratch_y("hdmi_driver") dma_handler_HDMI() {
             //ССИ без изображения
             //для выравнивания синхры
 
-            memset(activ_buf + 48,BASE_HDMI_CTRL_INX, 352);
-            memset(activ_buf,BASE_HDMI_CTRL_INX + 1, 48);
+            hdmi_irq_fill(activ_buf + 48, BASE_HDMI_CTRL_INX, 352);
+            hdmi_irq_fill(activ_buf, BASE_HDMI_CTRL_INX + 1, 48);
 
             // memset(activ_buf,BASE_HDMI_CTRL_INX,328);
             // memset(activ_buf+328,BASE_HDMI_CTRL_INX+1,48);
