@@ -1221,12 +1221,17 @@ static const uint32_t rogp_ws_shades[16] = {
     0x20ab64, 0x1c9e5c, 0x159051, 0x15824c,
     0x123f95, 0x0d388b, 0x042460, 0x011334
 };
-static const uint32_t random_ws_shades[16] = {
-    0xfff1f1, 0xfdefca, 0xc9d2e3, 0x54e99e,
-    0xdba30f, 0xff6a6a, 0x6b8dca, 0x44bddb,
-    0xd72a2a, 0x2a5ebc, 0x2493b0, 0x15824c,
-    0x19809a, 0x750909, 0x042460, 0x0c0422
-};
+static uint32_t random_ws_shades[16];
+static uint32_t random_palette_state = 0x6d2b79f5u;
+
+static uint32_t random_palette_next(void) {
+    uint32_t x = random_palette_state;
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    random_palette_state = x ? x : 0x6d2b79f5u;
+    return random_palette_state;
+}
 
 static void init_custom_palette_from_default(void) {
     for (unsigned i = 0; i < 16; ++i)
@@ -1256,6 +1261,30 @@ static const char *const palette_mode_names[] = {
 static const char *const palette_layer_names[PALETTE_LAYER_COUNT] = {
     "Back", "Screen 0", "Sprites 0", "Screen 1", "Sprites 1"
 };
+
+static const uint32_t *palette_colors_for_mode(uint8_t mode);
+
+static void generate_random_palette(void) {
+    const uint64_t seed = time_us_64();
+    random_palette_state ^= (uint32_t)seed ^ (uint32_t)(seed >> 32);
+    if (!random_palette_state) random_palette_state = 0x6d2b79f5u;
+
+    for (unsigned row = 0; row < 4; ++row) {
+        uint8_t sources[PALETTE_RANDOM];
+        for (unsigned i = 0; i < PALETTE_RANDOM; ++i) sources[i] = (uint8_t)i;
+
+        for (unsigned column = 0; column < 4; ++column) {
+            const unsigned remaining = PALETTE_RANDOM - column;
+            const unsigned pick = column + random_palette_next() % remaining;
+            const uint8_t source = sources[pick];
+            sources[pick] = sources[column];
+            sources[column] = source;
+
+            const unsigned shade = row * 4u + column;
+            random_ws_shades[shade] = palette_colors_for_mode(source)[shade];
+        }
+    }
+}
 
 static const uint32_t *palette_colors_for_mode(uint8_t mode) {
     switch (mode) {
@@ -2306,6 +2335,9 @@ int main() {
             ws_set_system(WS_SYSTEM_MONO);
         }
 
+        /* Random is generated afresh for every ROM start and is never persisted. */
+        generate_random_palette();
+
         /* Start from the selected persistent palette.  A per-game INI is
            loaded into Custom and selects Custom automatically. */
         apply_selected_palette();
@@ -2380,6 +2412,7 @@ int main() {
                 palette_all_set_requested = -1;
                 const uint8_t mode = palette_all_set == 0 ? PALETTE_DEFAULT :
                                      palette_all_set == 1 ? PALETTE_RANDOM : PALETTE_CUSTOM;
+                if (mode == PALETTE_RANDOM) generate_random_palette();
                 for (unsigned layer = 0; layer < PALETTE_LAYER_COUNT; ++layer)
                     palette_index[layer] = mode;
                 apply_selected_palettes();
