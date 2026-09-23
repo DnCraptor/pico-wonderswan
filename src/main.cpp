@@ -185,6 +185,11 @@ static bool isInReport(hid_keyboard_report_t const* report, const unsigned char 
 static volatile bool altPressed = false;
 static volatile bool ctrlPressed = false;
 static volatile uint8_t fxPressedV = 0;
+static volatile bool filebrowser_active = false;
+static volatile bool filebrowser_page_up_requested = false;
+static volatile bool filebrowser_page_down_requested = false;
+static volatile bool filebrowser_help_requested = false;
+static volatile bool filebrowser_help_close_requested = false;
 
 void process_kbd_report(hid_keyboard_report_t const* report, hid_keyboard_report_t const* prev_report) {
     /* printf("HID key report modifiers %2.2X report ", report->modifier);
@@ -199,6 +204,17 @@ void process_kbd_report(hid_keyboard_report_t const* report, hid_keyboard_report
     // resolved in the emulation loop together with the native X/Y groups.
     keyboard_bits.b = isInReport(report, HID_KEY_Z);
     keyboard_bits.a = isInReport(report, HID_KEY_X);
+
+    if (filebrowser_active) {
+        if (isInReport(report, HID_KEY_PAGE_UP) && !isInReport(prev_report, HID_KEY_PAGE_UP))
+            filebrowser_page_up_requested = true;
+        if (isInReport(report, HID_KEY_PAGE_DOWN) && !isInReport(prev_report, HID_KEY_PAGE_DOWN))
+            filebrowser_page_down_requested = true;
+        if (isInReport(report, HID_KEY_F1) && !isInReport(prev_report, HID_KEY_F1))
+            filebrowser_help_requested = true;
+        if (isInReport(report, HID_KEY_ESCAPE) && !isInReport(prev_report, HID_KEY_ESCAPE))
+            filebrowser_help_close_requested = true;
+    }
 
     /* Palette hotkeys are edge-triggered. F9/F10 cycle all five layers;
        F1..F5 cycle one layer forward, or backward while Shift is held.
@@ -220,7 +236,9 @@ void process_kbd_report(hid_keyboard_report_t const* report, hid_keyboard_report
         for (unsigned layer = 0; layer < 5; ++layer) {
             const uint8_t key = palette_layer_keys[layer];
             if (isInReport(report, key) && !isInReport(prev_report, key)) {
-                palette_layer_cycle_requested = palette_shift ? -(int8_t)(layer + 1) : (int8_t)(layer + 1);
+                /* F1 belongs to browser Help while the ROM browser is active. */
+                if (!(filebrowser_active && layer == 0))
+                    palette_layer_cycle_requested = palette_shift ? -(int8_t)(layer + 1) : (int8_t)(layer + 1);
                 break;
             }
         }
@@ -582,7 +600,68 @@ static bool demo_load_next_rom(const char *after_name) {
     }
 }
 
+static void filebrowser_show_help(void) {
+    static const char *const lines[] = {
+        "Arrows/WASD/NumPad - movement",
+        "Enter - START",
+        "X/P - A,  Z/O - B (landscape)",
+        ";/X/0 - A,  L/Z/9 - B (portrait)",
+        "1/4/2/3 - Y1/Y2/Y3/Y4 (landscape)",
+        "O/P/;/L - X1/X2/X3/X4 (portrait)",
+        "Backspace/Esc/Num+ - rotate presentation",
+        "START+Select - menu",
+        "",
+        "F1..F5 - next layer palette",
+        "Shift+F1..F5 - previous layer palette",
+        "F6 - all Default",
+        "Shift+F6 - Sticky Shuffle on/off",
+        "F7 - new Random, all Random",
+        "Shift+F7 - Shuffle",
+        "F8 - all Custom",
+        "F9/F10 - all previous/next palette",
+        "F11 - Backplane on/off",
+        "F12 - Custom palette editor; Tab - layer",
+        "Ctrl+F1..F8 - save state 1..8",
+        "Alt+F1..F8 - load state 1..8",
+        "Ctrl+Alt+Del - reboot",
+        "",
+        "Esc - close Help"
+    };
+    /* HDMI text output has only 53 visible columns even though the shared
+       text buffer is wider. Keep Help inside the actually visible viewport
+       and centre it against that viewport, not TEXTMODE_COLS. */
+    constexpr uint32_t width = 44;
+    constexpr uint32_t height = count_of(lines) + 2;
+#ifdef HDMI
+    constexpr uint32_t visible_cols = 53;
+#else
+    constexpr uint32_t visible_cols = TEXTMODE_COLS;
+#endif
+    const uint32_t x = (visible_cols - width) / 2;
+    const uint32_t y = (TEXTMODE_ROWS - height) / 2;
+
+    draw_window("Game mode hot-keys", x, y, width, height);
+    for (unsigned i = 0; i < count_of(lines); ++i)
+        draw_text(lines[i], x + 2, y + 1 + i, 15, 1);
+
+    filebrowser_help_requested = false;
+    filebrowser_help_close_requested = false;
+    while (!filebrowser_help_close_requested)
+        sleep_ms(10);
+    filebrowser_help_close_requested = false;
+}
+
 void filebrowser(const char pathname[256], const char executables[11]) {
+    struct filebrowser_active_guard_t {
+        filebrowser_active_guard_t() { filebrowser_active = true; }
+        ~filebrowser_active_guard_t() {
+            filebrowser_active = false;
+            filebrowser_page_up_requested = false;
+            filebrowser_page_down_requested = false;
+            filebrowser_help_requested = false;
+            filebrowser_help_close_requested = false;
+        }
+    } filebrowser_active_guard;
     bool debounce = true;
     bool demo_debounce = false;
     char basepath[256];
@@ -666,6 +745,36 @@ void filebrowser(const char pathname[256], const char executables[11]) {
 
             if (!debounce) {
                 debounce = !(gamepad1_bits.start);
+            }
+
+            if (filebrowser_help_requested) {
+                filebrowser_show_help();
+                /* Help overwrites the browser; rebuild this directory page. */
+                break;
+            }
+
+            constexpr int half_page = per_page / 2;
+            if (filebrowser_page_down_requested) {
+                filebrowser_page_down_requested = false;
+                int selected = offset + current_item + half_page;
+                if (selected >= total_files) selected = total_files - 1;
+                if (selected < offset + per_page) {
+                    current_item = selected - offset;
+                } else {
+                    current_item = per_page - 1;
+                    offset = selected - current_item;
+                }
+            }
+            if (filebrowser_page_up_requested) {
+                filebrowser_page_up_requested = false;
+                int selected = offset + current_item - half_page;
+                if (selected < 0) selected = 0;
+                if (selected >= offset) {
+                    current_item = selected - offset;
+                } else {
+                    current_item = 0;
+                    offset = selected;
+                }
             }
 
             // SELECT opens the emulator menu even before a cartridge is
