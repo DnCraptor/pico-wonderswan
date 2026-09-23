@@ -1047,12 +1047,13 @@ bool toggle_color() {
 #endif
 enum palette_mode_e : uint8_t {
     PALETTE_DEFAULT = 0,
-    PALETTE_RED = 1,
-    PALETTE_GREEN = 2,
-    PALETTE_BLUE = 3,
-    PALETTE_COLD = 4,
-    PALETTE_HOT = 5,
-    PALETTE_CUSTOM = 6
+    PALETTE_BGBR = 1,
+    PALETTE_YBGB = 2,
+    PALETTE_GBRB = 3,
+    PALETTE_RED_WINE = 4,
+    PALETTE_GREEN = 5,
+    PALETTE_BLUE = 6,
+    PALETTE_CUSTOM = 7
 };
 enum palette_layer_e : uint8_t {
     PALETTE_BACK = 0, PALETTE_SCREEN1, PALETTE_SPRITES0, PALETTE_SCREEN2, PALETTE_SPRITES1, PALETTE_LAYER_COUNT
@@ -1106,11 +1107,32 @@ static bool game_palette_linked = false;
 static uint32_t global_ws_shades[16];
 static bool global_palette_valid = false;
 
-static const uint32_t red_ws_shades[16] = {
-    0xffffff, 0xffe9e9, 0xffd4d4, 0xffbebe,
-    0xffa9a9, 0xff9393, 0xf48181, 0xd97272,
-    0xbe6464, 0xa25656, 0x874747, 0x6c3939,
-    0x512b2b, 0x361d1d, 0x1b0e0e, 0x000000
+static const uint32_t bgbr_ws_shades[16] = {
+    0xf1fcff, 0xcff5ff, 0xb5f0ff, 0x87e3fa,
+    0x9fdfa9, 0x7cdd8c, 0x3cd554, 0x019901,
+    0xb47430, 0xb46f24, 0xaa5d0a, 0x884803,
+    0x880c0c, 0x690404, 0x3f0101, 0x0c0422
+};
+
+static const uint32_t ybgb_ws_shades[16] = {
+    0xfffbf1, 0xfdefca, 0xffd871, 0xffbf16,
+    0xcac0a5, 0x9a94df, 0xb9983f, 0xa57c0c,
+    0x274e13, 0x741b47, 0xb13737, 0x965f26,
+    0x133975, 0x062452, 0x01183c, 0x000b1b
+};
+
+static const uint32_t gbrb_ws_shades[16] = {
+    0xf1fff8, 0xc3ffe1, 0x86f8bf, 0x54e99e,
+    0xa5b2ca, 0x89a1cc, 0x6b8dca, 0x4c79c9,
+    0x997777, 0xb46f24, 0x9e4949, 0xa32e2e,
+    0x753b13, 0x5e2906, 0x491f03, 0x1b0b00
+};
+
+static const uint32_t red_wine_ws_shades[16] = {
+    0xfff1f1, 0xffd6d6, 0xffbebe, 0xfda2a2,
+    0xff8989, 0xff6a6a, 0xff5353, 0xef3c3c,
+    0xd72a2a, 0xb71919, 0x950e0e, 0x7f0404,
+    0x750909, 0x560202, 0x3f0101, 0x0c0422
 };
 
 static const uint32_t green_ws_shades[16] = {
@@ -1125,20 +1147,6 @@ static const uint32_t blue_ws_shades[16] = {
     0xb6b6ff, 0xa3a3ff, 0x9191ff, 0x7f7fff,
     0x6c6cff, 0x5c5ce9, 0x4c4cc2, 0x3d3d9b,
     0x2e2e75, 0x1f1f4e, 0x0f0f27, 0x000000
-};
-
-static const uint32_t cold_ws_shades[16] = {
-    0xf1fcff, 0xfce0ff, 0x978bd5, 0xc48fbe,
-    0x9fdfa9, 0xf2942b, 0x34758c, 0x019901,
-    0x30654e, 0x5c5121, 0x185949, 0x473db3,
-    0x321600, 0xa01616, 0x2e0c57, 0x0c0422
-};
-
-static const uint32_t hot_ws_shades[16] = {
-    0xfffbf1, 0xd7ecbe, 0xfac283, 0xb6d7a8,
-    0xcac0a5, 0x9a94df, 0xcf8288, 0x1155cc,
-    0xb47430, 0x741b47, 0xb13737, 0x965f26,
-    0x321600, 0x274e13, 0x610101, 0x0c0422
 };
 
 static void init_custom_palette_from_default(void) {
@@ -1162,11 +1170,12 @@ static void apply_global_palette(void) {
 
 static const uint32_t *palette_colors_for_mode(uint8_t mode) {
     switch (mode) {
-        case PALETTE_RED: return red_ws_shades;
+        case PALETTE_BGBR: return bgbr_ws_shades;
+        case PALETTE_YBGB: return ybgb_ws_shades;
+        case PALETTE_GBRB: return gbrb_ws_shades;
+        case PALETTE_RED_WINE: return red_wine_ws_shades;
         case PALETTE_GREEN: return green_ws_shades;
         case PALETTE_BLUE: return blue_ws_shades;
-        case PALETTE_COLD: return cold_ws_shades;
-        case PALETTE_HOT: return hot_ws_shades;
         case PALETTE_CUSTOM:
             if (!global_palette_valid) init_custom_palette_from_default();
             return global_ws_shades;
@@ -1219,6 +1228,21 @@ static void config_mkdirs(void) {
     f_mkdir("/.config/wonderswan");
 }
 
+/* Keep the v10 on-disk palette IDs stable while allowing the menu order to
+   change.  This avoids invalidating existing wonderswan.conf files. */
+static uint8_t palette_mode_from_config(uint8_t stored) {
+    static const uint8_t map[] = {
+        PALETTE_DEFAULT, PALETTE_BGBR, PALETTE_GREEN, PALETTE_BLUE,
+        PALETTE_YBGB, PALETTE_GBRB, PALETTE_CUSTOM, PALETTE_RED_WINE
+    };
+    return stored < count_of(map) ? map[stored] : PALETTE_DEFAULT;
+}
+
+static uint8_t palette_mode_to_config(uint8_t mode) {
+    static const uint8_t map[] = { 0, 1, 4, 5, 7, 2, 3, 6 };
+    return mode < count_of(map) ? map[mode] : 0;
+}
+
 static bool load_config(void) {
     FIL file;
     if (f_mount(&fs, "", 1) != FR_OK ||
@@ -1238,7 +1262,7 @@ static bool load_config(void) {
         if (c.version == 9u) {
             /* v9 palette order was Default, Cold, Hot, Custom. */
             const auto migrate_v9_palette = [](uint8_t mode) -> uint8_t {
-                static const uint8_t map[] = { PALETTE_DEFAULT, PALETTE_COLD, PALETTE_HOT, PALETTE_CUSTOM };
+                static const uint8_t map[] = { 0, 4, 5, 6 };
                 return mode < count_of(map) ? map[mode] : PALETTE_DEFAULT;
             };
             c.palette_mode = migrate_v9_palette(c.palette_mode);
@@ -1264,7 +1288,7 @@ static bool load_config(void) {
         c.rotation_mode = old.rotation_mode; c.show_fps = old.show_fps;
         c.audio_volume = old.audio_volume; c.audio_rate_shift = old.audio_rate_shift;
         c.frame_skip = old.frame_skip; c.demo_duration = old.demo_duration;
-        static const uint8_t v8_palette_map[] = { PALETTE_DEFAULT, PALETTE_COLD, PALETTE_HOT, PALETTE_CUSTOM };
+        static const uint8_t v8_palette_map[] = { 0, 4, 5, 6 };
         const uint8_t migrated_palette = old.palette_mode < count_of(v8_palette_map) ? v8_palette_map[old.palette_mode] : PALETTE_DEFAULT;
         c.palette_mode = migrated_palette; c.backplane_mode = old.backplane_mode;
         for (unsigned i = 0; i < 16; ++i) c.custom_shades[i] = old.custom_shades[i];
@@ -1278,10 +1302,9 @@ static bool load_config(void) {
     audio_rate_shift = c.audio_rate_shift <= 3 ? c.audio_rate_shift : 0;
     frame_skip = c.frame_skip <= 3 ? c.frame_skip : 0;
     demo_duration = c.demo_duration < count_of(demo_seconds) ? c.demo_duration : 0;
-    const uint8_t back_mode = c.palette_mode <= PALETTE_CUSTOM ? c.palette_mode : PALETTE_DEFAULT;
-    palette_index[PALETTE_BACK] = back_mode;
+    palette_index[PALETTE_BACK] = palette_mode_from_config(c.palette_mode);
     for (unsigned i = 1; i < PALETTE_LAYER_COUNT; ++i)
-        palette_index[i] = c.palette_modes[i - 1] <= PALETTE_CUSTOM ? c.palette_modes[i - 1] : PALETTE_DEFAULT;
+        palette_index[i] = palette_mode_from_config(c.palette_modes[i - 1]);
     backplane_mode = c.backplane_mode <= 1 ? c.backplane_mode : 0;
     for (unsigned i = 0; i < 16; ++i)
         global_ws_shades[i] = c.custom_shades[i] & 0x00ffffffu;
@@ -1302,8 +1325,9 @@ static bool save_config(void) {
     c.audio_rate_shift = audio_rate_shift;
     c.frame_skip = frame_skip;
     c.demo_duration = demo_duration;
-    c.palette_mode = palette_index[PALETTE_BACK];
-    for (unsigned i = 1; i < PALETTE_LAYER_COUNT; ++i) c.palette_modes[i - 1] = palette_index[i];
+    c.palette_mode = palette_mode_to_config(palette_index[PALETTE_BACK]);
+    for (unsigned i = 1; i < PALETTE_LAYER_COUNT; ++i)
+        c.palette_modes[i - 1] = palette_mode_to_config(palette_index[i]);
     c.backplane_mode = backplane_mode;
     if (!global_palette_valid)
         init_custom_palette_from_default();
@@ -1750,11 +1774,11 @@ const MenuItem menu_items[] = {
         { "Volume: %s", ARRAY, &audio_volume, &apply_audio_volume, 4, { "Mute", "12% ", "25% ", "50% ", "100%" }},
         { "Emulate Sound: %s", ARRAY, &audio_rate_shift, &apply_audio_rate, 3, { "24 kHz", "12 kHz", "6 kHz ", "3 kHz " }},
         { "Frame skip: %s", ARRAY, &frame_skip, nullptr, 3, { "75 Hz", "50 Hz", "25 Hz", "Auto " }},
-        { "Back:      %s", ARRAY, &palette_index[PALETTE_BACK],     nullptr, 6, { "Default", "Red    ", "Green  ", "Blue   ", "Cold   ", "Hot    ", "Custom " }},
-        { "Screen 1:  %s", ARRAY, &palette_index[PALETTE_SCREEN1],  nullptr, 6, { "Default", "Red    ", "Green  ", "Blue   ", "Cold   ", "Hot    ", "Custom " }},
-        { "Sprites 0: %s", ARRAY, &palette_index[PALETTE_SPRITES0], nullptr, 6, { "Default", "Red    ", "Green  ", "Blue   ", "Cold   ", "Hot    ", "Custom " }},
-        { "Screen 2:  %s", ARRAY, &palette_index[PALETTE_SCREEN2],  nullptr, 6, { "Default", "Red    ", "Green  ", "Blue   ", "Cold   ", "Hot    ", "Custom " }},
-        { "Sprites 1: %s", ARRAY, &palette_index[PALETTE_SPRITES1], nullptr, 6, { "Default", "Red    ", "Green  ", "Blue   ", "Cold   ", "Hot    ", "Custom " }},
+        { "Back:      %s", ARRAY, &palette_index[PALETTE_BACK],     nullptr, 7, { "Default ", "BGBR    ", "YBGB    ", "GBRB    ", "Red wine", "Green   ", "Blue    ", "Custom  " }},
+        { "Screen 1:  %s", ARRAY, &palette_index[PALETTE_SCREEN1],  nullptr, 7, { "Default ", "BGBR    ", "YBGB    ", "GBRB    ", "Red wine", "Green   ", "Blue    ", "Custom  " }},
+        { "Sprites 0: %s", ARRAY, &palette_index[PALETTE_SPRITES0], nullptr, 7, { "Default ", "BGBR    ", "YBGB    ", "GBRB    ", "Red wine", "Green   ", "Blue    ", "Custom  " }},
+        { "Screen 2:  %s", ARRAY, &palette_index[PALETTE_SCREEN2],  nullptr, 7, { "Default ", "BGBR    ", "YBGB    ", "GBRB    ", "Red wine", "Green   ", "Blue    ", "Custom  " }},
+        { "Sprites 1: %s", ARRAY, &palette_index[PALETTE_SPRITES1], nullptr, 7, { "Default ", "BGBR    ", "YBGB    ", "GBRB    ", "Red wine", "Green   ", "Blue    ", "Custom  " }},
 #ifdef VGA
         { "Backplane: %s", ARRAY, &backplane_mode, nullptr, 1, { "On ", "Off" }},
 #else
