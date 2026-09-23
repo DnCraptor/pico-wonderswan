@@ -119,6 +119,7 @@ static bool keyboard_9 = false, keyboard_0 = false;
 static volatile bool palette_editor_active = false;
 static volatile int8_t palette_hex_key = -1;
 static volatile bool palette_f12_requested = false;
+static volatile bool backplane_toggle_requested = false;
 static volatile int8_t palette_cycle_requested = 0;
 static volatile int8_t palette_layer_cycle_requested = 0;
 static volatile int8_t palette_all_set_requested = -1;
@@ -226,6 +227,10 @@ void process_kbd_report(hid_keyboard_report_t const* report, hid_keyboard_report
         if (isInReport(report, HID_KEY_F8) && !isInReport(prev_report, HID_KEY_F8))
             palette_all_set_requested = 2;
     }
+
+    /* F11 toggles Backplane; F12 toggles the palette editor. */
+    if (isInReport(report, HID_KEY_F11) && !isInReport(prev_report, HID_KEY_F11))
+        backplane_toggle_requested = true;
 
     /* F12 is an edge-triggered direct palette-editor toggle. */
     if (isInReport(report, HID_KEY_F12) && !isInReport(prev_report, HID_KEY_F12))
@@ -2421,6 +2426,12 @@ int main() {
             }
 
             update_palette_overlay();
+
+            if (backplane_toggle_requested) {
+                backplane_toggle_requested = false;
+                backplane_mode ^= 1u;
+                save_config();
+            }
 
             if (palette_f12_requested) {
                 palette_f12_requested = false;
