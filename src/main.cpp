@@ -319,7 +319,10 @@ void process_kbd_report(hid_keyboard_report_t const* report, hid_keyboard_report
     ctrlPressed = isInReport(report, HID_KEY_CONTROL_LEFT) || isInReport(report, HID_KEY_CONTROL_RIGHT);
 
     if (altPressed && ctrlPressed && isInReport(report, HID_KEY_DELETE)) {
-        draw_text("Reboot!", 0, 0, 12, 0);
+        *(uint32_t *)0x400d000c = 0x60007204;
+        set_sys_clock_khz(150000, false);
+        sleep_ms(100);
+        vreg_set_voltage(VREG_VOLTAGE_1_10);
         watchdog_reboot(0, 0, 0);
         while(true) {
             tight_loop_contents();
@@ -2188,7 +2191,10 @@ static bool reset_config_and_offer_reboot(void) {
 
     for (;;) {
         if (gamepad1_bits.start) {
-            draw_text("Reboot!", 0, 0, 12, 0);
+            *(uint32_t *)0x400d000c = 0x60007204;
+            set_sys_clock_khz(150000, false);
+            sleep_ms(100);
+            vreg_set_voltage(VREG_VOLTAGE_1_10);
             watchdog_reboot(0, 0, 0);
             while (true)
                 tight_loop_contents();
@@ -2535,6 +2541,10 @@ int main() {
             config_path(cfgp, sizeof(cfgp));
             f_unlink(cfgp);
         }
+        *(uint32_t *)0x400d000c = 0x60007204;
+        set_sys_clock_khz(150000, false);
+        sleep_ms(100);
+        vreg_set_voltage(VREG_VOLTAGE_1_10);
         watchdog_reboot(0, 0, 0);
         while (true)
             tight_loop_contents();
