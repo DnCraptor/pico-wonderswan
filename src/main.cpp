@@ -122,7 +122,6 @@ static volatile int8_t palette_hex_key = -1;
 static volatile bool palette_tab_requested = false;
 static volatile bool palette_f12_requested = false;
 static volatile bool backplane_toggle_requested = false;
-static volatile int8_t palette_cycle_requested = 0;
 static volatile int8_t palette_layer_cycle_requested = 0;
 static volatile int8_t palette_all_set_requested = -1;
 static volatile bool palette_shuffle_requested = false;
@@ -217,14 +216,9 @@ void process_kbd_report(hid_keyboard_report_t const* report, hid_keyboard_report
             filebrowser_help_close_requested = true;
     }
 
-    /* Palette hotkeys are edge-triggered. F9/F10 cycle all five layers;
-       F1..F5 cycle one layer forward, or backward while Shift is held.
-       Ctrl/Alt + F1..F8 remain reserved for quick-state operations. */
-    if (isInReport(report, HID_KEY_F9) && !isInReport(prev_report, HID_KEY_F9))
-        palette_cycle_requested = -1;
-    if (isInReport(report, HID_KEY_F10) && !isInReport(prev_report, HID_KEY_F10))
-        palette_cycle_requested = 1;
-
+    /* Palette hotkeys are edge-triggered. F1..F5 cycle one layer forward,
+       or backward while Shift is held. Ctrl/Alt + F1..F8 remain reserved
+       for quick-state operations. */
     const bool palette_shift = (report->modifier &
             (KEYBOARD_MODIFIER_LEFTSHIFT | KEYBOARD_MODIFIER_RIGHTSHIFT)) != 0;
     const bool palette_modifier_conflict = (report->modifier &
@@ -243,18 +237,12 @@ void process_kbd_report(hid_keyboard_report_t const* report, hid_keyboard_report
                 break;
             }
         }
-        if (isInReport(report, HID_KEY_F6) && !isInReport(prev_report, HID_KEY_F6)) {
-            if (palette_shift) palette_sticky_shuffle_toggle_requested = true;
-            else palette_all_set_requested = 0;
-        }
-        if (isInReport(report, HID_KEY_F7) && !isInReport(prev_report, HID_KEY_F7)) {
-            if (palette_shift)
-                palette_shuffle_requested = true;
-            else
-                palette_all_set_requested = 1;
-        }
+        if (isInReport(report, HID_KEY_F6) && !isInReport(prev_report, HID_KEY_F6))
+            palette_sticky_shuffle_toggle_requested = true;
+        if (isInReport(report, HID_KEY_F7) && !isInReport(prev_report, HID_KEY_F7))
+            palette_shuffle_requested = true;
         if (isInReport(report, HID_KEY_F8) && !isInReport(prev_report, HID_KEY_F8))
-            palette_all_set_requested = 2;
+            palette_all_set_requested = 0;
     }
 
     /* F11 toggles Backplane; F12 toggles the palette editor. */
@@ -618,12 +606,9 @@ static void filebrowser_show_help(void) {
         "",
         "F1..F5 - next layer palette",
         "Shift+F1..F5 - previous layer palette",
-        "F6 - all Default",
-        "Shift+F6 - Sticky Shuffle on/off",
-        "F7 - new Random, all Random",
-        "Shift+F7 - Shuffle",
-        "F8 - all Custom",
-        "F9/F10 - all previous/next palette",
+        "F6 - Sticky Shuffle on/off",
+        "F7 - Shuffle once now",
+        "F8 - all Default",
         "F11 - Backplane on/off",
         "F12 - Custom palette editor; Tab - layer",
         "Ctrl+F1..F8 - save state 1..8",
@@ -1931,7 +1916,7 @@ static bool palette_repeat(bool level, palette_repeat_t *state) {
     return false;
 }
 
-static bool show_current_palettes(void) {
+static bool show_current_palettes(bool game_loaded) {
     uint8_t *buffer = (uint8_t *)SCREEN3;
     unsigned selected = 0;
     unsigned source_layer = PALETTE_BACK;
@@ -1960,7 +1945,8 @@ static bool show_current_palettes(void) {
             palette_f12_requested = false;
             if (game_palette_linked) game_palette_write();
             else save_config();
-            apply_selected_palettes();
+            if (game_loaded)
+                apply_selected_palettes();
             palette_editor_active = false;
             palette_hex_key = -1;
             palette_tab_requested = false;
@@ -2038,7 +2024,8 @@ static bool show_current_palettes(void) {
             } else if (back || close) {
                 if (game_palette_linked) game_palette_write();
                 else save_config();
-                apply_selected_palettes();
+                if (game_loaded)
+                    apply_selected_palettes();
                 palette_editor_active = false;
                 palette_hex_key = -1;
                 palette_tab_requested = false;
@@ -2079,7 +2066,8 @@ static bool show_current_palettes(void) {
             } else if (close) {
                 if (game_palette_linked) game_palette_write();
                 else save_config();
-                apply_selected_palettes();
+                if (game_loaded)
+                    apply_selected_palettes();
                 palette_editor_active = false;
                 palette_hex_key = -1;
                 palette_tab_requested = false;
@@ -2205,39 +2193,35 @@ static bool reset_config_and_offer_reboot(void) {
     }
 }
 
-static void shuffle_palettes(bool persist) {
+static void shuffle_palettes(bool persist, bool game_loaded = true) {
     for (unsigned layer = 0; layer < PALETTE_LAYER_COUNT; ++layer)
         palette_index[layer] = (uint8_t)(random_palette_next() % (PALETTE_CUSTOM + 1));
-    apply_selected_palettes();
+    if (game_loaded)
+        apply_selected_palettes();
     if (persist) {
-        if (game_palette_linked) game_palette_write();
+        if (game_loaded && game_palette_linked) game_palette_write();
         save_config();
     }
 }
 
 static bool service_hotkeys(bool game_loaded) {
-    const int8_t cycle = palette_cycle_requested;
-    if (cycle) {
-        palette_cycle_requested = 0;
-        for (unsigned layer = 0; layer < PALETTE_LAYER_COUNT; ++layer)
-            palette_index[layer] = cycle < 0 ? (palette_index[layer] + PALETTE_CUSTOM) % (PALETTE_CUSTOM + 1) : (palette_index[layer] + 1) % (PALETTE_CUSTOM + 1);
-        apply_selected_palettes(); if (game_palette_linked) game_palette_write(); save_config();
-    }
     const int8_t one = palette_layer_cycle_requested;
     if (one) {
         palette_layer_cycle_requested = 0;
         const unsigned layer = (unsigned)((one < 0 ? -one : one) - 1);
         if (layer < PALETTE_LAYER_COUNT) {
             palette_index[layer] = one < 0 ? (palette_index[layer] + PALETTE_CUSTOM) % (PALETTE_CUSTOM + 1) : (palette_index[layer] + 1) % (PALETTE_CUSTOM + 1);
-            apply_selected_palettes(); if (game_palette_linked) game_palette_write(); save_config();
+            if (game_loaded) apply_selected_palettes();
+            if (game_loaded && game_palette_linked) game_palette_write();
+            save_config();
             if (game_loaded) show_palette_overlay(layer);
         }
     }
-    if (palette_shuffle_requested) { palette_shuffle_requested = false; shuffle_palettes(true); }
+    if (palette_shuffle_requested) { palette_shuffle_requested = false; shuffle_palettes(true, game_loaded); }
     if (palette_sticky_shuffle_toggle_requested) {
         palette_sticky_shuffle_toggle_requested = false;
         palette_sticky_shuffle = !palette_sticky_shuffle;
-        if (palette_sticky_shuffle) shuffle_palettes(true);
+        if (palette_sticky_shuffle) shuffle_palettes(true, game_loaded);
     }
     const int8_t all = palette_all_set_requested;
     if (all >= 0) {
@@ -2245,18 +2229,25 @@ static bool service_hotkeys(bool game_loaded) {
         const uint8_t mode = all == 0 ? PALETTE_DEFAULT : all == 1 ? PALETTE_RANDOM : PALETTE_CUSTOM;
         if (mode == PALETTE_RANDOM) generate_random_palette();
         for (unsigned layer = 0; layer < PALETTE_LAYER_COUNT; ++layer) palette_index[layer] = mode;
-        apply_selected_palettes(); if (game_palette_linked) game_palette_write(); save_config();
+        if (game_loaded) apply_selected_palettes();
+        if (game_loaded && game_palette_linked) game_palette_write();
+        save_config();
     }
     if (backplane_toggle_requested) { backplane_toggle_requested = false; backplane_mode ^= 1u; save_config(); }
     bool palette_editor_opened = false;
     if (palette_f12_requested) {
         palette_f12_requested = false;
-        show_current_palettes();
+        show_current_palettes(game_loaded);
         palette_editor_opened = true;
     }
-    if (fxPressedV && game_loaded) {
-        demo_stop(); const uint8_t slot = fxPressedV; fxPressedV = 0; save_slot = slot;
-        if (altPressed) load(); else if (ctrlPressed) save();
+    if (fxPressedV) {
+        const uint8_t slot = fxPressedV;
+        fxPressedV = 0; /* Never defer a game-state hotkey until a ROM appears. */
+        if (game_loaded) {
+            demo_stop();
+            save_slot = slot;
+            if (altPressed) load(); else if (ctrlPressed) save();
+        }
     }
     return palette_editor_opened;
 }
@@ -2318,7 +2309,7 @@ static void menu(bool game_loaded) {
                             else if (changed && item->value == &audio_rate_shift)
                                 apply_audio_rate();
                             else if (changed && (item->value == &palette_index[0] || item->value == &palette_index[1] || item->value == &palette_index[2] || item->value == &palette_index[3] || item->value == &palette_index[4])) {
-                                apply_selected_palettes();
+                                if (game_loaded) apply_selected_palettes();
                                 if (game_palette_linked) game_palette_write();
                             }
                         }
@@ -2330,7 +2321,7 @@ static void menu(bool game_loaded) {
 
                     case SHOW_PALETTES:
                         if (gamepad1_bits.start && mono_ws_rom_loaded(game_loaded)) {
-                            if (show_current_palettes()) {
+                            if (show_current_palettes(game_loaded)) {
                                 save_config();
                                 return;
                             }
@@ -2387,7 +2378,7 @@ static void menu(bool game_loaded) {
                         (item->value == &palette_index[0] || item->value == &palette_index[1] ||
                          item->value == &palette_index[2] || item->value == &palette_index[3] ||
                          item->value == &palette_index[4]))
-                        snprintf(result, TEXTMODE_COLS, "Shift+F6: %s",
+                        snprintf(result, TEXTMODE_COLS, "Shuffle [F6]: %s",
                                  item->value_list[*(uint8_t *) item->value]);
                     else
                         snprintf(result, TEXTMODE_COLS, item->text, item->value_list[*(uint8_t *) item->value]);
@@ -2429,15 +2420,18 @@ static void menu(bool game_loaded) {
     if (!suppress_config_save)
         save_config();
 
-    /* Keep the effective palette: game override when linked, otherwise the
-       global palette.  Rebuilding from palette_index here would discard edits. */
-    if (!game_palette_linked)
-        apply_selected_palette();
-    else
-        apply_current_palette_to_video();
-
-    graphics_set_mode(GRAPHICSMODE_DEFAULT);
-    ws_gpu_refresh_palette();
+    /* Palette selectors are valid configuration even before a ROM exists.
+       Only push them into the emulated WS GPU after ws_init() has run. */
+    if (game_loaded) {
+        if (!game_palette_linked)
+            apply_selected_palette();
+        else
+            apply_current_palette_to_video();
+        graphics_set_mode(GRAPHICSMODE_DEFAULT);
+        ws_gpu_refresh_palette();
+    } else {
+        graphics_set_mode(TEXTMODE_DEFAULT);
+    }
 
 }
 
