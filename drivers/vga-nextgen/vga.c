@@ -77,13 +77,6 @@ static uint16_t __scratch_y("vga_bp_lut") ws_backplane_vga_pairs_landscape[256] 
     0xffe5, 0xf5e4, 0xf4f8, 0xe6db, 0xe7da, 0xfbeb, 0xd9d5, 0xc6c5,
 };
 
-/* Portrait data still uses the original 16-entry grayscale pair encoding.
- * Keep both hot lookup tables in SRAM9 so the VGA IRQ does not contend with
- * the ordinary SRAM banks used by its line buffers. */
-static uint16_t __scratch_y("vga_bp_portrait_lut") ws_backplane_vga_pairs_portrait[16] = {
-    0xc0c0, 0xd5c0, 0xeac0, 0xffc0, 0xc0d5, 0xd5d5, 0xead5, 0xffd5,
-    0xc0ea, 0xd5ea, 0xeaea, 0xffea, 0xc0ff, 0xd5ff, 0xeaff, 0xffff
-};
 
 
 static int dma_chan_ctrl;
@@ -226,8 +219,7 @@ void __time_critical_func() dma_handler_VGA() {
         uint16_t *bp_out = (uint16_t *)(*output_buffer) + shift_picture / 2;
         const uint8_t *bp_image = ws_backplane_portrait ? ws_backplane_vga_portrait : ws_backplane_vga;
         const uint8_t *bp = bp_image + (unsigned)line_number * 320u;
-        uint16_t *bp_palette = ws_backplane_portrait ?
-            ws_backplane_vga_pairs_portrait : ws_backplane_vga_pairs_landscape;
+        uint16_t *bp_palette = ws_backplane_vga_pairs_landscape;
         if (ws_backplane_portrait) {
             if (line_number < 8 || line_number >= 232) {
                 for (unsigned x = 0; x < 320; ++x)
