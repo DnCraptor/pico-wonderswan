@@ -985,27 +985,55 @@ static bool __time_critical_func(video_timer_callbackTV)(repeating_timer_t* rt) 
                 }
                 else
                 */
+                /* Horizontal scale from the ACTUAL frame width (WonderSwan
+                   is 224 px), not a fixed console constant: stretch the source
+                   across the whole active line (img_W - d_end) so the picture
+                   fills the screen instead of leaving a black margin on the
+                   right. Graphics mode only - the text renderer ignores di. */
+                if (graphics_buffer.width && video_mode.img_W > d_end)
+                    di = (uint16_t)(((uint32_t)graphics_buffer.width << 8)
+                                    / (uint32_t)(video_mode.img_W - d_end));
+
                 if (input_buffer != NULL)
                     switch (tv_out_mode.mode_bpp) {
                         case TEXTMODE_DEFAULT: {
-                            output_buffer8 += 8;
-                            for (int x = 0; x < TEXTMODE_COLS; x++) {
-                                const uint16_t offset = y / 8 * (TEXTMODE_COLS * 2) + x * 2;
-                                const uint8_t c = text_buffer[offset];
-                                const uint8_t colorIndex = text_buffer[offset + 1];
-                                uint8_t glyph_row = font_6x8[c * 8 + y % 8];
+                            /* Scale TEXTMODE_COLS glyph columns across the whole
+                               active line (img_W - d_end) with a fractional
+                               accumulator, so the full text row is shown at any
+                               TV width instead of a fixed pixel count that
+                               under- or over-runs the line buffer. */
+                            const int out_width = video_mode.img_W - d_end;
+                            const uint8_t* cell = text_buffer + (y / 8) * (TEXTMODE_COLS * 2);
+                            const int glyph_y = y % 8;
+                            const int text_width = TEXTMODE_COLS * 6;
+                            int source_acc = 0;
+                            int char_x = 0;
+                            int glyph_x = 0;
+                            output_buffer8 += buffer_shift;
 
-                                for (int bit = 6; bit--;) {
-                                    uint32_t cout32 = conv_color[li][glyph_row & 1
-                                                                         ? textmode_palette[colorIndex & 0xf]
-                                                                         //цвет шрифта
-                                                                         : textmode_palette[colorIndex >> 4] //цвет фона
-                                    ];
-                                    uint8_t* c_4 = (uint8_t*)&cout32;
-                                    *output_buffer8++ = c_4[bit % 4];
-                                    *output_buffer8++ = c_4[bit % 4];
-                                    *output_buffer8++ = c_4[bit % 4];
-                                    glyph_row >>= 1;
+                            uint8_t glyph_row = font_6x8[cell[0] * 8 + glyph_y];
+                            uint8_t colorIndex = cell[1];
+                            uint32_t cout32 = conv_color[li][(glyph_row & 1)
+                                                                 ? textmode_palette[colorIndex & 0xf]
+                                                                 : textmode_palette[colorIndex >> 4]];
+                            uint8_t* c_4 = (uint8_t*)&cout32;
+
+                            for (int i = 0; i < out_width; ++i) {
+                                *output_buffer8++ = c_4[i & 3];
+                                source_acc += text_width;
+                                if (source_acc >= out_width) {
+                                    source_acc -= out_width;
+                                    if (++glyph_x == 6) {
+                                        glyph_x = 0;
+                                        if (++char_x == TEXTMODE_COLS) continue;
+                                        cell += 2;
+                                        glyph_row = font_6x8[cell[0] * 8 + glyph_y];
+                                        colorIndex = cell[1];
+                                    }
+                                    cout32 = conv_color[li][((glyph_row >> glyph_x) & 1)
+                                                                ? textmode_palette[colorIndex & 0xf]
+                                                                : textmode_palette[colorIndex >> 4]];
+                                    c_4 = (uint8_t*)&cout32;
                                 }
                             }
                         }

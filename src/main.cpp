@@ -1,5 +1,6 @@
 #include <cstdio>
 #include <cstring>
+#include <cstdlib>
 #include <hardware/flash.h>
 #include <hardware/vreg.h>
 #include <hardware/clocks.h>
@@ -1179,6 +1180,28 @@ bool toggle_color() {
 
     return true;
 }
+
+/* Only PAL vs NTSC is user-selectable; line count, colour subcarrier and
+   interlace shifts are derived automatically (like modern soft-composite
+   drivers) - which is also why the picture no longer destabilises on toggles. */
+uint8_t ws_tv_system = 0;   /* 0 = PAL, 1 = NTSC */
+static void tv_apply_system(void) {
+    if (ws_tv_system) {
+        tv_out_mode.tv_system = g_TV_OUT_NTSC;
+        tv_out_mode.N_lines   = _525_lines;
+        tv_out_mode.c_freq    = _3579545;
+    } else {
+        tv_out_mode.tv_system = g_TV_OUT_PAL;
+        tv_out_mode.N_lines   = _625_lines;
+        tv_out_mode.c_freq    = _4433619;
+    }
+    tv_out_mode.cb_sync_PI_shift_lines = false;
+    tv_out_mode.cb_sync_PI_shift_half_frame = false;
+}
+static bool apply_tv_system(void) {
+    tv_apply_system();
+    return true;
+}
 #endif
 enum palette_mode_e : uint8_t {
     PALETTE_DEFAULT = 0,
@@ -1512,9 +1535,35 @@ static void palette_editor_update_title(unsigned layer) {
 }
 
 
+static const char* config_video_name(void) {
+#if HDMI
+    return "hdmi";
+#elif VGA
+    return "vga";
+#elif SOFTTV
+    return "softtv";
+#elif TV
+    return "tv";
+#elif TFT
+    return "tft";
+#else
+    return "unknown";
+#endif
+}
+
+/* Per-video-type config so backends with different settings never share one
+   file. Text .ini (key=value): a new key never invalidates an existing file -
+   no magic/version/size gate, no migrations. */
+static void config_path(char* path, size_t size) {
+    snprintf(path, size, "/.config/wonderswan/%s/config.ini", config_video_name());
+}
+
 static void config_mkdirs(void) {
+    char path[96];
     f_mkdir("/.config");
     f_mkdir("/.config/wonderswan");
+    snprintf(path, sizeof(path), "/.config/wonderswan/%s", config_video_name());
+    f_mkdir(path);
 }
 
 /* Palette selectors remain uint8_t fields in config v10; the expanded preset
@@ -1528,105 +1577,98 @@ static uint8_t palette_mode_to_config(uint8_t mode) {
 }
 
 static bool load_config(void) {
+    /* main() loads config before core1 initializes the video backend, so touch
+       only plain state here (no palette/video functions). Missing file and
+       unknown keys are non-fatal: whatever is absent keeps its default. */
+    if (f_mount(&fs, "", 1) != FR_OK) return false;
+    char path[128];
+    config_path(path, sizeof(path));
     FIL file;
-    if (f_mount(&fs, "", 1) != FR_OK ||
-        f_open(&file, "/.config/wonderswan/wonderswan.conf", FA_READ) != FR_OK)
-        return false;
+    if (f_open(&file, path, FA_READ) != FR_OK) return false;
+    const FSIZE_t fsz = f_size(&file);
+    if (fsz == 0 || fsz > 8192) { f_close(&file); return false; }
+    char* text = (char*)malloc((size_t)fsz + 1);
+    if (!text) { f_close(&file); return false; }
+    UINT br = 0;
+    const FRESULT fr = f_read(&file, text, (UINT)fsz, &br);
+    f_close(&file);
+    if (fr != FR_OK) { free(text); return false; }
+    text[br] = '\0';
 
-    const FSIZE_t size = f_size(&file);
-    ws_config_t c = {};
-    UINT bytes_read = 0;
-
-    if (size == sizeof(ws_config_t)) {
-        const FRESULT fr = f_read(&file, &c, sizeof(c), &bytes_read);
-        f_close(&file);
-        if (fr != FR_OK || bytes_read != sizeof(c) || c.magic != WS_CONFIG_MAGIC ||
-            (c.version != WS_CONFIG_VERSION && c.version != 9u))
-            return false;
-        if (c.version == 9u) {
-            /* v9 palette order was Default, Cold, Hot, Custom. */
-            const auto migrate_v9_palette = [](uint8_t mode) -> uint8_t {
-                static const uint8_t map[] = { PALETTE_DEFAULT, PALETTE_BLUE, PALETTE_ORANGE, PALETTE_CUSTOM };
-                return mode < count_of(map) ? map[mode] : PALETTE_DEFAULT;
-            };
-            c.palette_mode = migrate_v9_palette(c.palette_mode);
-            for (unsigned i = 0; i < 4; ++i) c.palette_modes[i] = migrate_v9_palette(c.palette_modes[i]);
+    char* p = text;
+    while (*p) {
+        char* key = p;
+        while (*p && *p != '\n' && *p != '\r' && *p != '=') ++p;
+        if (*p != '=') {
+            while (*p && *p != '\n' && *p != '\r') ++p;
+            while (*p == '\n' || *p == '\r') ++p;
+            continue;
         }
-    } else {
-        /* v8 had one palette selector and no per-layer selectors. Keep the
-           old packed prefix/layout and fan that selector out to all layers. */
-        typedef struct __attribute__((packed)) {
-            uint32_t magic;
-            uint8_t version, swap_ab, rotation_mode, show_fps, audio_volume,
-                    audio_rate_shift, frame_skip, demo_duration, palette_mode,
-                    backplane_mode;
-            uint32_t custom_shades[16];
-        } ws_config_v8_t;
-        if (size != sizeof(ws_config_v8_t)) { f_close(&file); return false; }
-        ws_config_v8_t old = {};
-        const FRESULT fr = f_read(&file, &old, sizeof(old), &bytes_read);
-        f_close(&file);
-        if (fr != FR_OK || bytes_read != sizeof(old) || old.magic != WS_CONFIG_MAGIC || old.version != 8u)
-            return false;
-        c.magic = old.magic; c.version = old.version; c.swap_ab = old.swap_ab;
-        c.rotation_mode = old.rotation_mode; c.show_fps = old.show_fps;
-        c.audio_volume = old.audio_volume; c.audio_rate_shift = old.audio_rate_shift;
-        c.frame_skip = old.frame_skip; c.demo_duration = old.demo_duration;
-        static const uint8_t v8_palette_map[] = { 0, 4, 5, 6 };
-        const uint8_t migrated_palette = old.palette_mode < count_of(v8_palette_map) ? v8_palette_map[old.palette_mode] : PALETTE_DEFAULT;
-        c.palette_mode = migrated_palette; c.backplane_mode = old.backplane_mode;
-        for (unsigned i = 0; i < 16; ++i) c.custom_shades[i] = old.custom_shades[i];
-        for (unsigned i = 0; i < 4; ++i) c.palette_modes[i] = migrated_palette;
-    }
+        *p++ = '\0';
+        char* val = p;
+        while (*p && *p != '\n' && *p != '\r') ++p;
+        while (*p == '\n' || *p == '\r') { *p = '\0'; ++p; }
 
-    swap_ab = c.swap_ab != 0;
-    rotation_mode = c.rotation_mode <= ROTATION_MANUAL ? c.rotation_mode : ROTATION_AUTO;
-    show_fps = c.show_fps != 0;
-    audio_volume = c.audio_volume <= 4 ? c.audio_volume : 4;
-    audio_rate_shift = c.audio_rate_shift <= 3 ? c.audio_rate_shift : 0;
-    frame_skip = c.frame_skip <= 3 ? c.frame_skip : 0;
-    demo_duration = c.demo_duration < count_of(demo_seconds) ? c.demo_duration : 0;
-    palette_index[PALETTE_BACK] = palette_mode_from_config(c.palette_mode);
-    for (unsigned i = 1; i < PALETTE_LAYER_COUNT; ++i)
-        palette_index[i] = palette_mode_from_config(c.palette_modes[i - 1]);
-    backplane_mode = c.backplane_mode <= 1 ? c.backplane_mode : 0;
-    for (unsigned i = 0; i < 16; ++i)
-        global_ws_shades[i] = c.custom_shades[i] & 0x00ffffffu;
+        const unsigned long d = strtoul(val, NULL, 10);
+        if      (!strcmp(key, "swap_ab"))    swap_ab = d != 0;
+        else if (!strcmp(key, "rotation"))   rotation_mode = d <= ROTATION_MANUAL ? (uint8_t)d : ROTATION_AUTO;
+        else if (!strcmp(key, "show_fps"))   show_fps = d != 0;
+        else if (!strcmp(key, "volume"))     audio_volume = d <= 4 ? (uint8_t)d : 4;
+        else if (!strcmp(key, "audio_rate")) audio_rate_shift = d <= 3 ? (uint8_t)d : 0;
+        else if (!strcmp(key, "frame_skip")) frame_skip = d <= 3 ? (uint8_t)d : 0;
+        else if (!strcmp(key, "demo"))       demo_duration = d < count_of(demo_seconds) ? (uint8_t)d : 0;
+        else if (!strcmp(key, "backplane"))  backplane_mode = d <= 1 ? (uint8_t)d : 0;
+        else if (!strncmp(key, "palette", 7)) {
+            const unsigned layer = (unsigned)strtoul(key + 7, NULL, 10);
+            if (layer < PALETTE_LAYER_COUNT) palette_index[layer] = d <= PALETTE_CUSTOM ? (uint8_t)d : PALETTE_DEFAULT;
+        }
+        else if (!strncmp(key, "shade", 5)) {
+            const unsigned idx = (unsigned)strtoul(key + 5, NULL, 10);
+            if (idx < 16) global_ws_shades[idx] = (uint32_t)strtoul(val, NULL, 16) & 0x00ffffffu;
+        }
+#if SOFTTV
+        else if (!strcmp(key, "tv_system")) ws_tv_system = d != 0;
+        else if (!strcmp(key, "color")) { color_mode = d != 0; tv_out_mode.color_index = color_mode ? 1.0f : 0.0f; }
+#endif
+    }
+    free(text);
     global_palette_valid = true;
     return true;
 }
-
 static bool save_config(void) {
     if (f_mount(&fs, "", 1) != FR_OK) return false;
     config_mkdirs();
-    ws_config_t c = {};
-    c.magic = WS_CONFIG_MAGIC;
-    c.version = WS_CONFIG_VERSION;
-    c.swap_ab = swap_ab;
-    c.rotation_mode = rotation_mode;
-    c.show_fps = show_fps;
-    c.audio_volume = audio_volume;
-    c.audio_rate_shift = audio_rate_shift;
-    c.frame_skip = frame_skip;
-    c.demo_duration = demo_duration;
-    c.palette_mode = palette_mode_to_config(palette_index[PALETTE_BACK]);
-    for (unsigned i = 1; i < PALETTE_LAYER_COUNT; ++i)
-        c.palette_modes[i - 1] = palette_mode_to_config(palette_index[i]);
-    c.backplane_mode = backplane_mode;
-    if (!global_palette_valid)
-        init_custom_palette_from_default();
-    for (unsigned i = 0; i < 16; ++i)
-        c.custom_shades[i] = global_ws_shades[i] & 0x00ffffffu;
-
+    char path[128];
+    config_path(path, sizeof(path));
     FIL file;
-    if (f_open(&file, "/.config/wonderswan/wonderswan.conf", FA_CREATE_ALWAYS | FA_WRITE) != FR_OK)
-        return false;
-    UINT written = 0;
-    const FRESULT fr = f_write(&file, &c, sizeof(c), &written);
-    const FRESULT close_fr = f_close(&file);
-    return fr == FR_OK && written == sizeof(c) && close_fr == FR_OK;
-}
+    if (f_open(&file, path, FA_CREATE_ALWAYS | FA_WRITE) != FR_OK) return false;
+    if (!global_palette_valid) init_custom_palette_from_default();
 
+    char buf[64];
+    UINT bw;
+    bool ok = true;
+    #define WCFG(...) do { const int _n = snprintf(buf, sizeof(buf), __VA_ARGS__); \
+        if (_n <= 0 || (unsigned)_n >= sizeof(buf) || f_write(&file, buf, (UINT)_n, &bw) != FR_OK || bw != (UINT)_n) ok = false; } while (0)
+    WCFG("swap_ab=%u\n", (unsigned)swap_ab);
+    WCFG("rotation=%u\n", (unsigned)rotation_mode);
+    WCFG("show_fps=%u\n", (unsigned)show_fps);
+    WCFG("volume=%u\n", (unsigned)audio_volume);
+    WCFG("audio_rate=%u\n", (unsigned)audio_rate_shift);
+    WCFG("frame_skip=%u\n", (unsigned)frame_skip);
+    WCFG("demo=%u\n", (unsigned)demo_duration);
+    WCFG("backplane=%u\n", (unsigned)backplane_mode);
+    for (unsigned i = 0; i < PALETTE_LAYER_COUNT; ++i)
+        WCFG("palette%u=%u\n", i, (unsigned)palette_index[i]);
+    for (unsigned i = 0; i < 16; ++i)
+        WCFG("shade%u=%06lx\n", i, (unsigned long)(global_ws_shades[i] & 0x00ffffffu));
+#if SOFTTV
+    WCFG("tv_system=%u\n", (unsigned)ws_tv_system);
+    WCFG("color=%u\n", color_mode ? 1u : 0u);
+#endif
+    #undef WCFG
+    const FRESULT close_fr = f_close(&file);
+    return ok && close_fr == FR_OK;
+}
 static bool game_palette_ini_path(char *path, size_t size) {
     if (!rom_size || !filename[0]) return false;
     char base[128];
@@ -2093,19 +2135,15 @@ const MenuItem menu_items[] = {
 //        },
         {},
 #if SOFTTV
-        { "TV system %s", ARRAY, &tv_out_mode.tv_system, nullptr, 1, { "PAL ", "NTSC" } },
-        { "TV Lines %s", ARRAY, &tv_out_mode.N_lines, nullptr, 3, { "624", "625", "524", "525" } },
-        { "Freq %s", ARRAY, &tv_out_mode.c_freq, nullptr, 1, { "3.579545", "4.433619" } },
+        { "TV system: %s", ARRAY, &ws_tv_system, &apply_tv_system, 1, { "PAL ", "NTSC" } },
         { "Colors: %s", ARRAY, &color_mode, &toggle_color, 1, { "NO ", "YES" } },
-        { "Shift lines %s", ARRAY, &tv_out_mode.cb_sync_PI_shift_lines, nullptr, 1, { "NO ", "YES" } },
-        { "Shift half frame %s", ARRAY, &tv_out_mode.cb_sync_PI_shift_half_frame, nullptr, 1, { "NO ", "YES" } },
 #endif
         {
                 "Overclocking: %s MHz", ARRAY, &frequency_index, &overclock, count_of(frequencies) - 1,
                 { "378", "396", "404", "408", "412", "416", "420", "424", "432", "444", "460", "504", "524", "528" }
         },
 #if PICO_RP2350
-        { "Voltage: %s", ARRAY, &voltage_index, &overclock, 4, { "Auto", "1.50V", "1.60V", "1.65V", "1.70V" } },
+        { "Voltage: %s", ARRAY, &voltage_index, &overclock, 4, { "Auto ", "1.50V", "1.60V", "1.65V", "1.70V" } },
 #endif
         { "Demo game time: %s", ARRAY, &demo_duration, nullptr, 7, { "15 sec", "30 sec", "45 sec", "1 min ", "2 min ", "3 min ", "5 min ", "10 min" } },
         { "Press START / Enter to apply", NONE },
@@ -2130,7 +2168,9 @@ static bool reset_config_and_offer_reboot(void) {
     if (f_mount(&fs, "", 1) != FR_OK)
         return false;
 
-    const FRESULT fr = f_unlink("/.config/wonderswan/wonderswan.conf");
+    char cfgp[128];
+    config_path(cfgp, sizeof(cfgp));
+    const FRESULT fr = f_unlink(cfgp);
     if (fr != FR_OK && fr != FR_NO_FILE)
         return false;
 
@@ -2414,6 +2454,9 @@ void __time_critical_func(render_core)() {
     usbhid_init(process_kbd_report);
     nespad_begin(clock_get_hz(clk_sys) / 1000, NES_GPIO_CLK, NES_GPIO_DATA, NES_GPIO_LAT);
 
+#if SOFTTV
+    tv_apply_system();   /* PAL/NTSC timing from config, before the TV PIO starts */
+#endif
     graphics_init();
 
 #ifdef HWAY
@@ -2487,8 +2530,11 @@ int main() {
         tight_loop_contents();
     sleep_ms(200);
     if (gamepad1_bits.select) {
-        if (f_mount(&fs, "", 1) == FR_OK)
-            f_unlink("/.config/wonderswan/wonderswan.conf");
+        if (f_mount(&fs, "", 1) == FR_OK) {
+            char cfgp[128];
+            config_path(cfgp, sizeof(cfgp));
+            f_unlink(cfgp);
+        }
         watchdog_reboot(0, 0, 0);
         while (true)
             tight_loop_contents();

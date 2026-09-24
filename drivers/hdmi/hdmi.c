@@ -243,8 +243,7 @@ static void __scratch_y("hdmi_driver") dma_handler_HDMI() {
         uint8_t* output_buffer = activ_buf + 72; //для выравнивания синхры;
         int y = line / 2;
         switch (graphics_mode) {
-            case GRAPHICSMODE_DEFAULT:
-            case VGA_320x240x256: {
+            case GRAPHICSMODE_DEFAULT: {
                 /* The WonderSwan backplane is already stored as palette indices.
                  * Copying one 320-byte row is cheaper than doing RGB work in the
                  * scanout path; the game image below simply overwrites its window. */
@@ -287,8 +286,7 @@ static void __scratch_y("hdmi_driver") dma_handler_HDMI() {
 
                 break;
             }
-            case TEXTMODE_DEFAULT:
-            case TEXTMODE_53x30: {
+            case TEXTMODE_DEFAULT: {
                 *output_buffer++ = 255;
 
                 for (int x = 0; x < TEXTMODE_COLS; x++) {
@@ -665,7 +663,7 @@ void graphics_set_mode(enum graphics_mode_t mode) {
 
     // graphics_set_mode() is called once before graphics_init() while the
     // system clock is being changed. The HDMI palette is not live yet there.
-    if (hdmi_ready && (mode == TEXTMODE_DEFAULT || mode == TEXTMODE_53x30))
+    if (hdmi_ready && (mode == TEXTMODE_DEFAULT))
         hdmi_ui_palette_pending = true;
 
     clrScr(0);
