@@ -42,8 +42,47 @@ static int visible_line_size = 320;
 /* Backplane pixels are already spatially dithered at the physical 640-pixel
  * VGA width. Keep this tiny lookup in RAM: one logical output word is two
  * independently quantized RGB222 pixels. */
-static uint16_t ws_backplane_vga_pairs[16] = {
-    0xc0c0, 0xd5c0, 0xeac0, 0xffc0, 0xc0d5, 0xd5d5, 0xead5, 0xffd5, 0xc0ea, 0xd5ea, 0xeaea, 0xffea, 0xc0ff, 0xd5ff, 0xeaff, 0xffff
+static uint16_t __scratch_y("vga_bp_lut") ws_backplane_vga_pairs_landscape[256] = {
+    0xc0c0, 0xffff, 0xfeff, 0xfffe, 0xe5e9, 0xd5d5, 0xe9e9, 0xfaff,
+    0xe9e5, 0xfbfe, 0xfffa, 0xfefb, 0xfefa, 0xfafe, 0xeaea, 0xfefe,
+    0xe9ea, 0xeae9, 0xc1d5, 0xd6d5, 0xd6d6, 0xd5c1, 0xd5d6, 0xffea,
+    0xfeea, 0xeafe, 0xeaff, 0xc1c1, 0xc5d5, 0xd1c5, 0xd5c5, 0xc1c0,
+    0xc0c1, 0xc5d1, 0xeefa, 0xfbee, 0xfaee, 0xeefb, 0xc1c5, 0xc5c1,
+    0xfaef, 0xebfe, 0xeae5, 0xfeeb, 0xeffa, 0xc0d0, 0xeffe, 0xe5ea,
+    0xc0d5, 0xeeff, 0xd1d5, 0xd0c0, 0xeafa, 0xfaea, 0xfbff, 0xffee,
+    0xe9d5, 0xe6e9, 0xd5d1, 0xe9e6, 0xfeef, 0xd5c0, 0xd5e9, 0xe5d5,
+    0xffef, 0xc0c5, 0xefff, 0xd6da, 0xdad6, 0xfffb, 0xd5e5, 0xc5d6,
+    0xd9e5, 0xebeb, 0xead5, 0xc5d0, 0xe5d9, 0xc0d1, 0xc1c4, 0xc4d1,
+    0xc5c0, 0xc4c1, 0xd6c5, 0xd5ea, 0xd1c4, 0xd4c1, 0xd0c1, 0xd0c5,
+    0xc1d4, 0xfeee, 0xc1d0, 0xeefe, 0xc6d5, 0xefef, 0xfae9, 0xd1c0,
+    0xeaeb, 0xc0c4, 0xd1c1, 0xd5c6, 0xc4c0, 0xd6ea, 0xc0d4, 0xead6,
+    0xd4c0, 0xebea, 0xd4d5, 0xebef, 0xe6ea, 0xc1d1, 0xc6d6, 0xc4d0,
+    0xd0c4, 0xdaea, 0xd6c6, 0xc5c5, 0xe9fa, 0xd0d5, 0xefeb, 0xd5d0,
+    0xeada, 0xe5e5, 0xeae6, 0xd5d4, 0xd6c1, 0xd5e6, 0xeaf9, 0xe6d5,
+    0xdad5, 0xe6da, 0xd9e9, 0xc1d6, 0xdae6, 0xdaeb, 0xf9ea, 0xffeb,
+    0xebdb, 0xfafa, 0xebff, 0xdada, 0xd1d4, 0xd5c4, 0xd5da, 0xe5d6,
+    0xeafb, 0xe9d9, 0xc4d5, 0xebda, 0xf4f4, 0xe9f9, 0xd2c5, 0xdae5,
+    0xc6c1, 0xd4d1, 0xc2d5, 0xe9d6, 0xc2c1, 0xe6d9, 0xefea, 0xd6e5,
+    0xeadb, 0xd6e6, 0xd4c5, 0xc2c5, 0xf4e4, 0xdbeb, 0xeaee, 0xd5c2,
+    0xfbea, 0xd4d0, 0xc1c6, 0xc6d1, 0xfbef, 0xc1c2, 0xc5d4, 0xdbea,
+    0xd9e6, 0xf9e9, 0xf5f4, 0xc5c2, 0xe4f4, 0xd6d9, 0xd1c6, 0xe5da,
+    0xd5eb, 0xe5d4, 0xc5c6, 0xe6d6, 0xd6eb, 0xd6e9, 0xeffb, 0xd4e5,
+    0xd0d0, 0xe9d0, 0xc5c4, 0xeaef, 0xfee9, 0xebfa, 0xc6da, 0xd5e4,
+    0xc5d2, 0xd6d1, 0xfafb, 0xd9ea, 0xf4f5, 0xffd5, 0xd5d9, 0xd0d4,
+    0xfaeb, 0xdac6, 0xd1ea, 0xe9d4, 0xd1d6, 0xd6db, 0xfbfa, 0xf8f4,
+    0xebd6, 0xe6e5, 0xe5e6, 0xd9d6, 0xead9, 0xc4c5, 0xf9f4, 0xdbda,
+    0xeeeb, 0xc2c6, 0xd5ff, 0xe4d5, 0xe4e5, 0xd7da, 0xead7, 0xdae9,
+    0xeeea, 0xc6c6, 0xe9fe, 0xcad6, 0xd6ff, 0xebd5, 0xe5e4, 0xe9e4,
+    0xead4, 0xe4f5, 0xdadb, 0xdbdb, 0xe6ff, 0xc0e5, 0xffe6, 0xd0d1,
+    0xffe5, 0xf5e4, 0xf4f8, 0xe6db, 0xe7da, 0xfbeb, 0xd9d5, 0xc6c5,
+};
+
+/* Portrait data still uses the original 16-entry grayscale pair encoding.
+ * Keep both hot lookup tables in SRAM9 so the VGA IRQ does not contend with
+ * the ordinary SRAM banks used by its line buffers. */
+static uint16_t __scratch_y("vga_bp_portrait_lut") ws_backplane_vga_pairs_portrait[16] = {
+    0xc0c0, 0xd5c0, 0xeac0, 0xffc0, 0xc0d5, 0xd5d5, 0xead5, 0xffd5,
+    0xc0ea, 0xd5ea, 0xeaea, 0xffea, 0xc0ff, 0xd5ff, 0xeaff, 0xffff
 };
 
 
@@ -62,7 +101,7 @@ static bool is_flash_line = false;
 static bool is_flash_frame = false;
 
 //буфер 1к графической палитры
-static uint16_t palette[2][256];
+static uint16_t __scratch_y("vga_palette") palette[2][256];
 
 static uint32_t bg_color[2];
 static uint16_t palette16_mask = 0;
@@ -70,7 +109,7 @@ static uint16_t palette16_mask = 0;
 static uint text_buffer_width = 0;
 static uint text_buffer_height = 0;
 
-static uint16_t txt_palette[16];
+static uint16_t __scratch_y("vga_txt_palette") txt_palette[16];
 
 //буфер 2К текстовой палитры для быстрой работы
 static uint16_t* txt_palette_fast = NULL;
@@ -122,9 +161,9 @@ void __time_critical_func() dma_handler_VGA() {
     uint32_t* * output_buffer = &lines_pattern[2 + (screen_line & 1)];
     switch (graphics_mode) {
         case GRAPHICSMODE_DEFAULT:
-            line_number = screen_line / 2;
-            if (screen_line % 2) return;
-            y = screen_line / 2 - graphics_buffer_shift_y;
+            line_number = (int)(screen_line >> 1);
+            if (screen_line & 1u) return;
+            y = line_number - graphics_buffer_shift_y;
             break;
 
         case TEXTMODE_DEFAULT: {
@@ -183,12 +222,12 @@ void __time_critical_func() dma_handler_VGA() {
     }
 
     /* VGA backplane: one byte from flash, one RAM palette lookup, one store. */
-    if (graphics_mode == GRAPHICSMODE_DEFAULT && ws_backplane_enabled &&
-        line_number >= 0 && line_number < 240) {
+    if (ws_backplane_enabled && line_number >= 0 && line_number < 240) {
         uint16_t *bp_out = (uint16_t *)(*output_buffer) + shift_picture / 2;
         const uint8_t *bp_image = ws_backplane_portrait ? ws_backplane_vga_portrait : ws_backplane_vga;
         const uint8_t *bp = bp_image + (unsigned)line_number * 320u;
-        uint16_t *bp_palette = ws_backplane_vga_pairs;
+        uint16_t *bp_palette = ws_backplane_portrait ?
+            ws_backplane_vga_pairs_portrait : ws_backplane_vga_pairs_landscape;
         if (ws_backplane_portrait) {
             if (line_number < 8 || line_number >= 232) {
                 for (unsigned x = 0; x < 320; ++x)
@@ -211,7 +250,7 @@ void __time_critical_func() dma_handler_VGA() {
     }
 
     if (y < 0) {
-        if (graphics_mode == GRAPHICSMODE_DEFAULT && ws_backplane_enabled) {
+        if (ws_backplane_enabled) {
             dma_channel_set_read_addr(dma_chan_ctrl, output_buffer, false);
             return;
         }
@@ -219,7 +258,7 @@ void __time_critical_func() dma_handler_VGA() {
         return;
     }
     if (y >= graphics_buffer_height) {
-        if (graphics_mode == GRAPHICSMODE_DEFAULT && ws_backplane_enabled) {
+        if (ws_backplane_enabled) {
             dma_channel_set_read_addr(dma_chan_ctrl, output_buffer, false);
             return;
         }
@@ -273,7 +312,8 @@ void __time_critical_func() dma_handler_VGA() {
     switch (graphics_mode) {
         case GRAPHICSMODE_DEFAULT:
             input_buffer_8bit = (uint8_t*)input_buffer + y * width;
-            for (int i = width; i--;) {
+            uint8_t *input_end = input_buffer_8bit + width;
+            while (input_buffer_8bit < input_end) {
                 *output_buffer_16bit++ = current_palette[*input_buffer_8bit++];
             }
             break;
