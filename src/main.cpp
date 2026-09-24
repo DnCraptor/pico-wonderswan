@@ -319,7 +319,8 @@ void process_kbd_report(hid_keyboard_report_t const* report, hid_keyboard_report
     ctrlPressed = isInReport(report, HID_KEY_CONTROL_LEFT) || isInReport(report, HID_KEY_CONTROL_RIGHT);
 
     if (altPressed && ctrlPressed && isInReport(report, HID_KEY_DELETE)) {
-        watchdog_enable(10, true);
+        draw_text("Reboot!", 0, 0, 12, 0);
+        watchdog_reboot(0, 0, 0);
         while(true) {
             tight_loop_contents();
         }
@@ -357,6 +358,7 @@ typedef struct __attribute__((__packed__)) {
 
 constexpr int max_files = 320;
 file_item_t *fileItems = (file_item_t *) (&SCREEN1[0][0] + TEXTMODE_COLS * TEXTMODE_ROWS * 2);
+static FIL file;
 
 static bool demo_requested = false;
 static bool demo_active = false;
@@ -432,7 +434,6 @@ static void menu(bool game_loaded);
 
 bool filebrowser_loadfile(const char pathname[256]) {
     UINT bytes_read = 0;
-    FIL file;
 
 #ifdef HWAY
     ws_audio_hway_silence();
@@ -1025,7 +1026,7 @@ bool overclock() {
     if (!runtime_drivers_ready) {
         volatile uint32_t *qmi_m0_timing = (uint32_t *)0x400d000c;
         vreg_disable_voltage_limit();
-        vreg_set_voltage(VREG_VOLTAGE_1_60);
+        vreg_set_voltage(VREG_VOLTAGE_1_50);
         sleep_ms(33);
         *qmi_m0_timing = 0x60007204;
         const bool res = set_sys_clock_khz(target_khz, false);
@@ -1129,10 +1130,10 @@ bool save() {
     ws_state_header_t h = { WS_STATE_MAGIC, WS_STATE_VERSION, (uint32_t)rom_size, memory_getRomCrc(), 0,
         sizeof(internalRam), ws_memory_get_sram_size(), ws_memory_get_eeprom_size(), sizeof(state->cpu), sizeof(state->io), sizeof(state->gpu), sizeof(state->audio), ws_cycles, ws_skip, ws_cyclesByLine };
     if (f_mount(&fs, "", 1) != FR_OK) { free(state); return false; }
-    FIL fd; if (f_open(&fd, pathname, FA_CREATE_ALWAYS | FA_WRITE) != FR_OK) { free(state); return false; }
-    bool ok = state_write(&fd, &h, sizeof(h)) && state_write(&fd, &state->cpu, sizeof(state->cpu)) && state_write(&fd, &state->io, sizeof(state->io)) && state_write(&fd, &state->gpu, sizeof(state->gpu)) && state_write(&fd, &state->audio, sizeof(state->audio)) && state_write(&fd, internalRam, sizeof(internalRam)) && state_write_cart(&fd, 1u << 20, h.sram_size) && state_write_cart(&fd, 0, h.eeprom_size);
-    if (ok) ok = f_sync(&fd) == FR_OK;
-    f_close(&fd);
+    if (f_open(&file, pathname, FA_CREATE_ALWAYS | FA_WRITE) != FR_OK) { free(state); return false; }
+    bool ok = state_write(&file, &h, sizeof(h)) && state_write(&file, &state->cpu, sizeof(state->cpu)) && state_write(&file, &state->io, sizeof(state->io)) && state_write(&file, &state->gpu, sizeof(state->gpu)) && state_write(&file, &state->audio, sizeof(state->audio)) && state_write(&file, internalRam, sizeof(internalRam)) && state_write_cart(&file, 1u << 20, h.sram_size) && state_write_cart(&file, 0, h.eeprom_size);
+    if (ok) ok = f_sync(&file) == FR_OK;
+    f_close(&file);
     free(state);
     if (!ok) f_unlink(pathname);
     return ok;
@@ -1143,13 +1144,13 @@ bool load() {
     char pathname[255];
     snprintf(pathname, sizeof(pathname), "%s\\%s_%d.save", HOME_DIR, filename, save_slot);
     if (f_mount(&fs, "", 1) != FR_OK) return false;
-    FIL fd; if (f_open(&fd, pathname, FA_READ) != FR_OK) return false;
-    ws_state_header_t h; bool ok = state_read(&fd, &h, sizeof(h));
+    if (f_open(&file, pathname, FA_READ) != FR_OK) return false;
+    ws_state_header_t h; bool ok = state_read(&file, &h, sizeof(h));
     ok = ok && h.magic == WS_STATE_MAGIC && h.version == WS_STATE_VERSION && h.rom_size == rom_size && h.rom_crc == memory_getRomCrc() && h.internal_ram_size == sizeof(internalRam) && h.sram_size == ws_memory_get_sram_size() && h.eeprom_size == ws_memory_get_eeprom_size() && h.cpu_size == sizeof(nec_snapshot_t) && h.io_size == sizeof(ws_io_snapshot_t) && h.gpu_size == sizeof(ws_gpu_snapshot_t) && h.audio_size == sizeof(ws_audio_snapshot_t);
     ws_state_core_t *state = ok ? (ws_state_core_t *)malloc(sizeof(*state)) : nullptr;
     if (ok && !state) ok = false;
-    if (ok) ok = state_read(&fd, &state->cpu, sizeof(state->cpu)) && state_read(&fd, &state->io, sizeof(state->io)) && state_read(&fd, &state->gpu, sizeof(state->gpu)) && state_read(&fd, &state->audio, sizeof(state->audio)) && state_read(&fd, internalRam, sizeof(internalRam)) && state_read_cart(&fd, 1u << 20, h.sram_size) && state_read_cart(&fd, 0, h.eeprom_size);
-    f_close(&fd);
+    if (ok) ok = state_read(&file, &state->cpu, sizeof(state->cpu)) && state_read(&file, &state->io, sizeof(state->io)) && state_read(&file, &state->gpu, sizeof(state->gpu)) && state_read(&file, &state->audio, sizeof(state->audio)) && state_read(&file, internalRam, sizeof(internalRam)) && state_read_cart(&file, 1u << 20, h.sram_size) && state_read_cart(&file, 0, h.eeprom_size);
+    f_close(&file);
     if (!ok) { free(state); return false; }
     ws_cycles = h.ws_cycles; ws_skip = h.ws_skip; ws_cyclesByLine = h.ws_cycles_by_line;
     nec_snapshot_set(&state->cpu); ws_io_snapshot_set(&state->io); ws_gpu_snapshot_set(&state->gpu); ws_audio_snapshot_set(&state->audio);
@@ -1583,7 +1584,6 @@ static bool load_config(void) {
     if (f_mount(&fs, "", 1) != FR_OK) return false;
     char path[128];
     config_path(path, sizeof(path));
-    FIL file;
     if (f_open(&file, path, FA_READ) != FR_OK) return false;
     const FSIZE_t fsz = f_size(&file);
     if (fsz == 0 || fsz > 8192) { f_close(&file); return false; }
@@ -1640,7 +1640,6 @@ static bool save_config(void) {
     config_mkdirs();
     char path[128];
     config_path(path, sizeof(path));
-    FIL file;
     if (f_open(&file, path, FA_CREATE_ALWAYS | FA_WRITE) != FR_OK) return false;
     if (!global_palette_valid) init_custom_palette_from_default();
 
@@ -1669,6 +1668,7 @@ static bool save_config(void) {
     const FRESULT close_fr = f_close(&file);
     return ok && close_fr == FR_OK;
 }
+
 static bool game_palette_ini_path(char *path, size_t size) {
     if (!rom_size || !filename[0]) return false;
     char base[128];
@@ -1710,7 +1710,6 @@ static bool game_palette_write(void) {
         (unsigned)palette_index[PALETTE_SPRITES0], (unsigned)palette_index[PALETTE_SCREEN1],
         (unsigned)palette_index[PALETTE_SPRITES1]);
     if (len <= 0 || (size_t)len >= sizeof(data)) return false;
-    FIL file;
     if (f_open(&file, path, FA_CREATE_ALWAYS | FA_WRITE) != FR_OK) return false;
     UINT written = 0;
     const FRESULT fr = f_write(&file, data, (UINT)len, &written);
@@ -1721,7 +1720,6 @@ static bool game_palette_write(void) {
 static bool game_palette_read(void) {
     char path[256];
     if (!game_palette_ini_path(path, sizeof(path))) return false;
-    FIL file;
     if (f_open(&file, path, FA_READ) != FR_OK) return false;
     char data[768] = {};
     UINT bytes_read = 0;
@@ -2190,7 +2188,8 @@ static bool reset_config_and_offer_reboot(void) {
 
     for (;;) {
         if (gamepad1_bits.start) {
-            watchdog_enable(10, true);
+            draw_text("Reboot!", 0, 0, 12, 0);
+            watchdog_reboot(0, 0, 0);
             while (true)
                 tight_loop_contents();
         }
@@ -2530,6 +2529,7 @@ int main() {
         tight_loop_contents();
     sleep_ms(200);
     if (gamepad1_bits.select) {
+        draw_text("Reboot!", 0, 0, 12, 0);
         if (f_mount(&fs, "", 1) == FR_OK) {
             char cfgp[128];
             config_path(cfgp, sizeof(cfgp));
