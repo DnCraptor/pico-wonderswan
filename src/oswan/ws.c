@@ -339,6 +339,10 @@ pgDebug("SCANLINE INT", 76);
 ////////////////////////////////////////////////////////////////////////////////
 void ws_done(void)
 {
+#ifdef HWAY
+	/* A ROM lifetime ends here on every path, including Demo -> browser. */
+	ws_audio_hway_silence();
+#endif
 	ws_memory_done();
 	ws_io_done();
 //	ws_audio_done();

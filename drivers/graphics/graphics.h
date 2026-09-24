@@ -28,20 +28,6 @@ extern "C" {
 enum graphics_mode_t {
     TEXTMODE_DEFAULT,
     GRAPHICSMODE_DEFAULT,
-
-    TEXTMODE_53x30,
-
-    TEXTMODE_160x100,
-
-    CGA_160x200x16,
-    CGA_320x200x4,
-    CGA_640x200x2,
-
-    TGA_320x200x16,
-    EGA_320x200x16x4,
-    VGA_320x240x256,
-    GRAPHICSMODE_ASPECT,
-    // planar VGA
 };
 
 // Буффер текстового режима
