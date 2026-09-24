@@ -156,8 +156,8 @@ bool psram_configure_cart_storage(uint32_t sram_size, uint32_t eeprom_size,
         const uint32_t old_magic = physical_psram_read32(CART_IDENTITY_ADDR);
         const uint32_t old_size = physical_psram_read32(CART_IDENTITY_ADDR + 4u);
         const uint32_t old_checksum = physical_psram_read32(CART_IDENTITY_ADDR + 8u);
-        const bool same_cart = old_magic == CART_IDENTITY_MAGIC &&
-                               old_size == rom_size && old_checksum == rom_checksum;
+        const bool same_cart = false; /* old_magic == CART_IDENTITY_MAGIC && /// GunPey bug
+                               old_size == rom_size && old_checksum == rom_checksum; */
 
         if (!same_cart) {
             /* Physical PSRAM survives a watchdog reset.  Its cartridge area
