@@ -116,11 +116,66 @@ uint32_t init_psram() {
 #endif
 }
 
-bool psram_configure_cart_storage(uint32_t sram_size, uint32_t eeprom_size) {
+#define CART_IDENTITY_ADDR ((1u << 20) - 16u)
+#define CART_IDENTITY_MAGIC 0x57534349u /* "WSCI" */
+
+static uint8_t physical_psram_read8(uint32_t addr) {
 #if PICO_RP2350
-    if (wonderswan_qspi_psram_available()) return true;
+    if (wonderswan_qspi_psram_available()) return *qspi_aux_ptr(addr);
 #endif
-    if (legacy_psram_available) return true;
+    return legacy_psram_available ? psram_read8(&psram_spi, addr) : 0xff;
+}
+
+static void physical_psram_write8(uint32_t addr, uint8_t value) {
+#if PICO_RP2350
+    if (wonderswan_qspi_psram_available()) { *qspi_aux_ptr(addr) = value; return; }
+#endif
+    if (legacy_psram_available) psram_write8(&psram_spi, addr, value);
+}
+
+static uint32_t physical_psram_read32(uint32_t addr) {
+    return (uint32_t)physical_psram_read8(addr) |
+           ((uint32_t)physical_psram_read8(addr + 1u) << 8) |
+           ((uint32_t)physical_psram_read8(addr + 2u) << 16) |
+           ((uint32_t)physical_psram_read8(addr + 3u) << 24);
+}
+
+static void physical_psram_write32(uint32_t addr, uint32_t value) {
+    for (unsigned i = 0; i < 4; ++i)
+        physical_psram_write8(addr + i, (uint8_t)(value >> (i * 8)));
+}
+
+bool psram_configure_cart_storage(uint32_t sram_size, uint32_t eeprom_size,
+                                  uint32_t rom_size, uint16_t rom_checksum) {
+#if PICO_RP2350
+    const bool physical_psram = wonderswan_qspi_psram_available() || legacy_psram_available;
+#else
+    const bool physical_psram = legacy_psram_available;
+#endif
+    if (physical_psram) {
+        const uint32_t old_magic = physical_psram_read32(CART_IDENTITY_ADDR);
+        const uint32_t old_size = physical_psram_read32(CART_IDENTITY_ADDR + 4u);
+        const uint32_t old_checksum = physical_psram_read32(CART_IDENTITY_ADDR + 8u);
+        const bool same_cart = old_magic == CART_IDENTITY_MAGIC &&
+                               old_size == rom_size && old_checksum == rom_checksum;
+
+        if (!same_cart) {
+            /* Physical PSRAM survives a watchdog reset.  Its cartridge area
+               must therefore be treated like inserted-cartridge state, not as
+               global emulator state shared by every ROM.  A different ROM gets
+               erased EEPROM/SRAM; restarting the same ROM keeps its contents. */
+            for (uint32_t i = 0; i < eeprom_size; ++i)
+                physical_psram_write8(i, 0xff);
+            const uint32_t ram_bytes = sram_size ? sram_size : 0x10000u;
+            for (uint32_t i = 0; i < ram_bytes; ++i)
+                physical_psram_write8((1u << 20) + i, 0);
+
+            physical_psram_write32(CART_IDENTITY_ADDR + 4u, rom_size);
+            physical_psram_write32(CART_IDENTITY_ADDR + 8u, rom_checksum);
+            physical_psram_write32(CART_IDENTITY_ADDR, CART_IDENTITY_MAGIC);
+        }
+        return true;
+    }
 
     if (nvram_file_open) {
         nvram_cache_flush();

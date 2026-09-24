@@ -182,7 +182,7 @@ int ws_memory_init(uint8 *rom, uint32 wsRomSize) {
     if (ws_romHeader->minimumSupportSystem == WS_SYSTEM_COLOR)
         ws_gpu_operatingInColor = 1;
 
-    return psram_configure_cart_storage(sramSize, eepromSize) ? 1 : 0;
+    return psram_configure_cart_storage(sramSize, eepromSize, romSize, ws_rom_checksum) ? 1 : 0;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
