@@ -124,9 +124,8 @@ static volatile bool palette_f12_requested = false;
 static volatile bool backplane_toggle_requested = false;
 static volatile int8_t palette_layer_cycle_requested = 0;
 static volatile int8_t palette_all_set_requested = -1;
-static volatile bool palette_shuffle_requested = false;
-static volatile bool palette_sticky_shuffle_toggle_requested = false;
-static bool palette_sticky_shuffle = false;
+static volatile bool palette_shuffle_requested = false; // F7
+static volatile bool palette_shuffle_requested_no_save = false; // F6
 
 static bool portrait_enabled() {
     bool portrait;
@@ -238,7 +237,7 @@ void process_kbd_report(hid_keyboard_report_t const* report, hid_keyboard_report
             }
         }
         if (isInReport(report, HID_KEY_F6) && !isInReport(prev_report, HID_KEY_F6))
-            palette_sticky_shuffle_toggle_requested = true;
+            palette_shuffle_requested_no_save = true;
         if (isInReport(report, HID_KEY_F7) && !isInReport(prev_report, HID_KEY_F7))
             palette_shuffle_requested = true;
         if (isInReport(report, HID_KEY_F8) && !isInReport(prev_report, HID_KEY_F8))
@@ -606,8 +605,8 @@ static void filebrowser_show_help(void) {
         "",
         "F1..F5 - next layer palette",
         "Shift+F1..F5 - previous layer palette",
-        "F6 - Sticky Shuffle on/off",
-        "F7 - Shuffle once now",
+        "F6 - Shuffle and not save",
+        "F7 - Shuffle and save",
         "F8 - all Default",
         "F11 - Backplane on/off",
         "F12 - Custom palette editor; Tab - layer",
@@ -654,13 +653,15 @@ void filebrowser(const char pathname[256], const char executables[11]) {
     } filebrowser_active_guard;
     bool debounce = true;
     bool demo_debounce = false;
-    char basepath[256];
-    char tmp[TEXTMODE_COLS + 1];
+    /* filebrowser() remains on the stack while menu(false) is open.  Keep its
+       sizeable work buffers out of that nested call chain. */
+    static char basepath[256];
+    static char tmp[TEXTMODE_COLS + 1];
     strcpy(basepath, pathname);
     constexpr int per_page = TEXTMODE_ROWS - 3;
 
-    DIR dir;
-    FILINFO fileInfo;
+    static DIR dir;
+    static FILINFO fileInfo;
 
     if (FR_OK != f_mount(&fs, "SD", 1)) {
         draw_text("SD Card not inserted or SD Card error!", 0, 0, 12, 0);
@@ -1626,12 +1627,12 @@ static bool load_config(void) {
 static bool save_config(void) {
     if (f_mount(&fs, "", 1) != FR_OK) return false;
     config_mkdirs();
-    char path[128];
+    static char path[128];
     config_path(path, sizeof(path));
     if (f_open(&file, path, FA_CREATE_ALWAYS | FA_WRITE) != FR_OK) return false;
     if (!global_palette_valid) init_custom_palette_from_default();
 
-    char buf[64];
+    static char buf[64];
     UINT bw;
     bool ok = true;
     #define WCFG(...) do { const int _n = snprintf(buf, sizeof(buf), __VA_ARGS__); \
@@ -2217,11 +2218,13 @@ static bool service_hotkeys(bool game_loaded) {
             if (game_loaded) show_palette_overlay(layer);
         }
     }
-    if (palette_shuffle_requested) { palette_shuffle_requested = false; shuffle_palettes(true, game_loaded); }
-    if (palette_sticky_shuffle_toggle_requested) {
-        palette_sticky_shuffle_toggle_requested = false;
-        palette_sticky_shuffle = !palette_sticky_shuffle;
-        if (palette_sticky_shuffle) shuffle_palettes(true, game_loaded);
+    if (palette_shuffle_requested) {
+        palette_shuffle_requested = false;
+        shuffle_palettes(true, game_loaded);
+    }
+    if (palette_shuffle_requested_no_save) {
+        palette_shuffle_requested_no_save = false;
+        shuffle_palettes(false, game_loaded);
     }
     const int8_t all = palette_all_set_requested;
     if (all >= 0) {
@@ -2374,14 +2377,7 @@ static void menu(bool game_loaded) {
                     snprintf(result, TEXTMODE_COLS, item->text, *(uint8_t *) item->value);
                     break;
                 case ARRAY:
-                    if (palette_sticky_shuffle &&
-                        (item->value == &palette_index[0] || item->value == &palette_index[1] ||
-                         item->value == &palette_index[2] || item->value == &palette_index[3] ||
-                         item->value == &palette_index[4]))
-                        snprintf(result, TEXTMODE_COLS, "Shuffle [F6]: %s",
-                                 item->value_list[*(uint8_t *) item->value]);
-                    else
-                        snprintf(result, TEXTMODE_COLS, item->text, item->value_list[*(uint8_t *) item->value]);
+                    snprintf(result, TEXTMODE_COLS, item->text, item->value_list[*(uint8_t *) item->value]);
                     break;
                 case TEXT:
                     snprintf(result, TEXTMODE_COLS, item->text, item->value);
@@ -2617,7 +2613,7 @@ int main() {
             game_palette_linked = false;
             apply_selected_palette();
         }
-        if (palette_sticky_shuffle && mono_ws_rom_loaded(true))
+        if (demo_active && mono_ws_rom_loaded(true))
             shuffle_palettes(false);
         ws_reset();
         apply_current_palette_to_video();
