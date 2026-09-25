@@ -126,6 +126,8 @@ static volatile int8_t palette_layer_cycle_requested = 0;
 static volatile int8_t palette_all_set_requested = -1;
 static volatile bool palette_shuffle_requested = false; // F7
 static volatile bool palette_shuffle_requested_no_save = false; // F6
+static volatile bool game_palette_save_requested = false; // F8
+static volatile bool filebrowser_direct_requested = false; // F10
 
 static bool portrait_enabled() {
     bool portrait;
@@ -241,7 +243,11 @@ void process_kbd_report(hid_keyboard_report_t const* report, hid_keyboard_report
         if (isInReport(report, HID_KEY_F7) && !isInReport(prev_report, HID_KEY_F7))
             palette_shuffle_requested = true;
         if (isInReport(report, HID_KEY_F8) && !isInReport(prev_report, HID_KEY_F8))
+            game_palette_save_requested = true;
+        if (isInReport(report, HID_KEY_F9) && !isInReport(prev_report, HID_KEY_F9))
             palette_all_set_requested = 0;
+        if (isInReport(report, HID_KEY_F10) && !isInReport(prev_report, HID_KEY_F10))
+            filebrowser_direct_requested = true;
     }
 
     /* F11 toggles Backplane; F12 toggles the palette editor. */
@@ -607,7 +613,9 @@ static void filebrowser_show_help(void) {
         "Shift+F1..F5 - previous layer palette",
         "F6 - Shuffle and not save",
         "F7 - Shuffle and save",
-        "F8 - all Default",
+        "F8 - Save colors for this game",
+        "F9 - All Defaults",
+        "F10 - File manager",
         "F11 - Backplane on/off",
         "F12 - Custom palette editor; Tab - layer",
         "Ctrl+F1..F8 - save state 1..8",
@@ -1944,8 +1952,7 @@ static bool show_current_palettes(bool game_loaded) {
     for (;;) {
         if (palette_f12_requested) {
             palette_f12_requested = false;
-            if (game_palette_linked) game_palette_write();
-            else save_config();
+            save_config();
             if (game_loaded)
                 apply_selected_palettes();
             palette_editor_active = false;
@@ -2023,8 +2030,7 @@ static bool show_current_palettes(bool game_loaded) {
                 hex_digit = -1;
                 redraw = true;
             } else if (back || close) {
-                if (game_palette_linked) game_palette_write();
-                else save_config();
+                save_config();
                 if (game_loaded)
                     apply_selected_palettes();
                 palette_editor_active = false;
@@ -2065,8 +2071,7 @@ static bool show_current_palettes(bool game_loaded) {
                 hex_digit = -1;
                 redraw = true;
             } else if (close) {
-                if (game_palette_linked) game_palette_write();
-                else save_config();
+                save_config();
                 if (game_loaded)
                     apply_selected_palettes();
                 palette_editor_active = false;
@@ -2199,10 +2204,8 @@ static void shuffle_palettes(bool persist, bool game_loaded = true) {
         palette_index[layer] = (uint8_t)(random_palette_next() % (PALETTE_CUSTOM + 1));
     if (game_loaded)
         apply_selected_palettes();
-    if (persist) {
-        if (game_loaded && game_palette_linked) game_palette_write();
+    if (persist)
         save_config();
-    }
 }
 
 static bool service_hotkeys(bool game_loaded) {
@@ -2213,7 +2216,6 @@ static bool service_hotkeys(bool game_loaded) {
         if (layer < PALETTE_LAYER_COUNT) {
             palette_index[layer] = one < 0 ? (palette_index[layer] + PALETTE_CUSTOM) % (PALETTE_CUSTOM + 1) : (palette_index[layer] + 1) % (PALETTE_CUSTOM + 1);
             if (game_loaded) apply_selected_palettes();
-            if (game_loaded && game_palette_linked) game_palette_write();
             save_config();
             if (game_loaded) show_palette_overlay(layer);
         }
@@ -2226,6 +2228,19 @@ static bool service_hotkeys(bool game_loaded) {
         palette_shuffle_requested_no_save = false;
         shuffle_palettes(false, game_loaded);
     }
+    if (game_palette_save_requested) {
+        game_palette_save_requested = false;
+        if (mono_ws_rom_loaded(game_loaded) && game_palette_write())
+            game_palette_linked = true;
+    }
+    if (filebrowser_direct_requested) {
+        filebrowser_direct_requested = false;
+        if (game_loaded) {
+            demo_stop();
+            save_config();
+            reboot = true;
+        }
+    }
     const int8_t all = palette_all_set_requested;
     if (all >= 0) {
         palette_all_set_requested = -1;
@@ -2233,7 +2248,6 @@ static bool service_hotkeys(bool game_loaded) {
         if (mode == PALETTE_RANDOM) generate_random_palette();
         for (unsigned layer = 0; layer < PALETTE_LAYER_COUNT; ++layer) palette_index[layer] = mode;
         if (game_loaded) apply_selected_palettes();
-        if (game_loaded && game_palette_linked) game_palette_write();
         save_config();
     }
     if (backplane_toggle_requested) { backplane_toggle_requested = false; backplane_mode ^= 1u; save_config(); }
@@ -2282,6 +2296,10 @@ static void menu(bool game_loaded) {
                was displayed before the menu (notably the ROM browser). */
             graphics_set_mode(TEXTMODE_DEFAULT);
         }
+        /* F10 sets reboot in service_hotkeys(); leave this modal menu so the
+           normal emulation-session exit path can enter the ROM browser. */
+        if (reboot)
+            return;
         for (int i = 0; i < MENU_ITEMS_NUMBER; i++) {
             uint8_t y = i + (TEXTMODE_ROWS - MENU_ITEMS_NUMBER >> 1);
             uint8_t x = TEXTMODE_COLS / 2 - 10;
@@ -2313,7 +2331,6 @@ static void menu(bool game_loaded) {
                                 apply_audio_rate();
                             else if (changed && (item->value == &palette_index[0] || item->value == &palette_index[1] || item->value == &palette_index[2] || item->value == &palette_index[3] || item->value == &palette_index[4])) {
                                 if (game_loaded) apply_selected_palettes();
-                                if (game_palette_linked) game_palette_write();
                             }
                         }
                         break;
