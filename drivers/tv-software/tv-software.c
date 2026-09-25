@@ -149,7 +149,6 @@ static uint32_t* conv_color[2];
 //палитра сохранённая
 static uint8_t __scratch_y("buff4") paletteRGB[3][256]; //768 байт
 
-static repeating_timer_t video_timer;
 
 
 void graphics_set_modeTV(tv_out_mode_t mode) {
@@ -515,17 +514,16 @@ static void __not_in_flash_func(tv_fill8)(uint8_t* d, uint8_t v, int n) {
 
 static bool __time_critical_func(video_timer_callbackTV)(repeating_timer_t* rt) {
     static uint dma_inx_out = 0;
-    static uint lines_buf_inx = 0;
+    static uint lines_buf_inx = N_LINE_BUF - 1;
 
     if (dma_chan_ctrl == -1) return 1; //не определен дма канал
 
-    //получаем индекс выводимой строки
-    uint dma_inx = (N_LINE_BUF_DMA - 2 + ((dma_channel_hw_addr(dma_chan_ctrl)->read_addr - (uint32_t)rd_addr_DMA_CTRL) /
-                                          4)) % (N_LINE_BUF_DMA);
+    /* DMA completion drives this routine exactly once per emitted scanline.
+       Render exactly one future line instead of polling/chasing the control
+       DMA descriptor pointer. */
+    uint dma_inx = (dma_inx_out + 1u) % N_LINE_BUF_DMA;
 
-    //uint n_loop=(N_LINE_BUF_DMA+dma_inx-dma_inx_out)%N_LINE_BUF_DMA;
-
-    static uint32_t line_active = 0;
+    static uint32_t line_active = UINT32_MAX;
     static uint8_t* input_buffer = NULL;
     static uint32_t frame_i = 0;
     static uint32_t g_str_index = 1;
@@ -1165,11 +1163,19 @@ static bool __time_critical_func(video_timer_callbackTV)(repeating_timer_t* rt) 
         rd_addr_DMA_CTRL[dma_inx_out] = (uint32_t)&lines_buf[lines_buf_inx];
         //включаем заполненный буфер в данные для вывода
         dma_inx_out = (dma_inx_out + 1) % (N_LINE_BUF_DMA);
-        dma_inx = (N_LINE_BUF_DMA - 2 + ((dma_channel_hw_addr(dma_chan_ctrl)->read_addr - (uint32_t)rd_addr_DMA_CTRL) /
-                                         4)) % (N_LINE_BUF_DMA);
-        // dma_inx=(N_LINE_BUF_DMA-2+((dma_channel_hw_addr(dma_chan_ctrl)->read_addr-(uint32_t)rd_addr_DMA_CTRL)/4))%(N_LINE_BUF_DMA);
+        /* One invocation must render one and only one line. */
+        dma_inx = dma_inx_out;
     }
     return true;
+}
+
+/* The main video DMA IRQ fires only after a complete composite scanline has
+   left its line buffer. The chained control DMAs have already started the next
+   line, so the just-freed buffer can be refilled safely. This is the same
+   four-line pipeline used by the working Watara/Gamate SOFTTV driver. */
+static void __time_critical_func(dma_handler_TV)(void) {
+    dma_hw->ints0 = 1u << dma_chan;
+    (void)video_timer_callbackTV(NULL);
 }
 
 void graphics_set_buffer(uint8_t* buffer, const uint16_t width, const uint16_t height) {
@@ -1275,8 +1281,9 @@ void graphics_init() {
     channel_config_set_write_increment(&cfg_dma, false);
     channel_config_set_ring(&cfg_dma,false, 2 + N_LINE_BUF_log2);
 
-    for (int i = 0; i < N_LINE_BUF * 2; i++) {
-        transfer_count_DMA_CTRL[i] = video_mode.H_len / 1;
+    for (int i = 0; i < N_LINE_BUF_DMA; i++) {
+        transfer_count_DMA_CTRL[i] = video_mode.H_len;
+        rd_addr_DMA_CTRL[i] = (uint32_t)&lines_buf[i & (N_LINE_BUF - 1)];
     }
 
     dma_channel_configure(
@@ -1290,13 +1297,18 @@ void graphics_init() {
     );
 
 
-    dma_start_channel_mask((1u << dma_chan_ctrl2));
+    /* Prime all four line buffers before output starts. Afterwards each main
+       DMA completion frees exactly one buffer and its IRQ refills that slot. */
+    for (int i = 0; i < N_LINE_BUF; ++i)
+        (void)video_timer_callbackTV(NULL);
 
-    int hz = 30000;
-    if (!alarm_pool_add_repeating_timer_us(alarm_pool_create(2, 16), 1000000 / hz, video_timer_callbackTV, NULL,
-                                           &video_timer)) {
-        return;
-    }
+    dma_hw->ints0 = 1u << dma_chan;
+    irq_set_exclusive_handler(DMA_IRQ_0, dma_handler_TV);
+    irq_set_priority(DMA_IRQ_0, 0x80);
+    dma_channel_set_irq0_enabled(dma_chan, true);
+    irq_set_enabled(DMA_IRQ_0, true);
+
+    dma_start_channel_mask((1u << dma_chan_ctrl2));
     // graphics_get_default_modeTV();
     graphics_set_modeTV(tv_out_mode);
     // FIXME сделать конфигурацию пользователем

@@ -2677,13 +2677,10 @@ int main() {
         uint64_t fps_started = time_us_64();
         uint32_t fps_frames = 0;
         graphics_set_fps_overlay(show_fps, 0);
-#if defined(VGA) || defined(HDMI)
         // The WonderSwan video timing is 3.072 MHz / (256 cycles * 159 lines),
-        // i.e. one emulated frame every 13250 us (~75.47 Hz). VGA is normally
-        // slower, so use a third buffer and let VGA latch the newest completed
-        // frame instead of throttling emulation to the physical video refresh.
+        // i.e. one emulated frame every 13250 us (~75.47 Hz). Keep the pacing
+        // clock available for every video backend, including SOFTTV.
         uint64_t next_ws_frame = time_us_64() + 13250;
-#endif
         uint8_t  fs_phase = 0;      // frame-skip phase counter (mod 3)
         bool     fs_behind = false; // Auto: did the previous frame overrun its budget
         while (!reboot) {
@@ -2926,16 +2923,21 @@ int main() {
                 buffer = (uint8_t*)SCREEN1;
             }
 
-            // Keep the existing 60 Hz pacing for outputs whose drivers do not
-            // yet provide frame-boundary buffer ownership.
-            static uint8_t frame_cnt = 0;
-            static uint64_t frame_timer_start = 0;
-            if (++frame_cnt == 6) {
-                while (time_us_64() - frame_timer_start < 16666 * 6)
-                    tight_loop_contents();
-                frame_timer_start = time_us_64();
-                frame_cnt = 0;
+            // Pace every emulated WonderSwan frame at its native ~75.47 Hz.
+            // SOFTTV scanout has independent timing; batching six emulated frames
+            // and then sleeping starves the 24 kHz PCM producer for tens of ms.
+            fs_behind = ((int64_t)(time_us_64() - next_ws_frame) >= 0);
+            while ((int64_t)(time_us_64() - next_ws_frame) < 0) {
+#ifndef HWAY
+                i2s_dma_pump(&i2s_config);
+#else
+                tight_loop_contents();
+#endif
             }
+            next_ws_frame += 13250;
+            const uint64_t now = time_us_64();
+            if ((int64_t)(now - next_ws_frame) > 13250)
+                next_ws_frame = now + 13250;
 #endif
 
             tight_loop_contents();
