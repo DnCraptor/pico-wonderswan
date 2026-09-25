@@ -427,6 +427,39 @@ void graphics_set_palette(uint8_t i, uint32_t color888) {
     conv_colorINV[1][i] = (c32 >> 16) | ((c32 & 0xffff) << 16);
 }
 
+void *__not_in_flash_func(tv_memcpy)(void *dst,
+                                          const void *src,
+                                          size_t len)
+{
+    uint8_t *d = (uint8_t *)dst;
+    const uint8_t *s = (const uint8_t *)src;
+
+    if ((((uintptr_t)d ^ (uintptr_t)s) & 3u) == 0u) {
+        while (len && ((uintptr_t)d & 3u)) {
+            *d++ = *s++;
+            --len;
+        }
+
+        if (len >= 4u) {
+            uint32_t *d32 = (uint32_t *)d;
+            const uint32_t *s32 = (const uint32_t *)s;
+            size_t n32 = len >> 2;
+
+            while (n32--)
+                *d32++ = *s32++;
+
+            d = (uint8_t *)d32;
+            s = (const uint8_t *)s32;
+            len &= 3u;
+        }
+    }
+
+    while (len--)
+        *d++ = *s++;
+
+    return dst;
+}
+
 static inline void* __not_in_flash_func(tv_memset)(void* ptr, int value, size_t len)
 {
     uint8_t* p = (uint8_t*)ptr;
@@ -897,8 +930,8 @@ static bool __time_critical_func(video_timer_callbackTV)(repeating_timer_t* rt) 
             // // //цветовая вспышка
             int mul_sh = 19;
             if (tv_out_mode.c_freq == _4433619) mul_sh = 23; //сдвиг вспышки для более высокой частоты
-            if (li) memcpy(output_buffer8 + 0 + mul_sh * 4, cb[1], 40);
-            else memcpy(output_buffer8 + 0 + mul_sh * 4, cb[0], 40);
+            if (li) tv_memcpy(output_buffer8 + 0 + mul_sh * 4, cb[1], 40);
+            else tv_memcpy(output_buffer8 + 0 + mul_sh * 4, cb[0], 40);
 
             //цветовая вспышка V2
 
@@ -947,8 +980,8 @@ static bool __time_critical_func(video_timer_callbackTV)(repeating_timer_t* rt) 
                 tv_fill8(output_buffer8, video_mode.LVL_BLACK_TMPL, video_mode.img_W);
                 //зона изображения
                 //цветовая вспышка(тест в зоне изображения)
-                // if (li)	memcpy(out_buf8-v_mode.begin_img_shx+22*4,cb[1],40);
-                // else memcpy(out_buf8-v_mode.begin_img_shx+22*4,cb[0],40);
+                // if (li)	tv_memcpy(out_buf8-v_mode.begin_img_shx+22*4,cb[1],40);
+                // else tv_memcpy(out_buf8-v_mode.begin_img_shx+22*4,cb[0],40);
 
 
                 // tv_memset(out_buf8,v_mode.LVL_BLACK_TMPL,v_mode.img_W);	//test
