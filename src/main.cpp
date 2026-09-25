@@ -412,23 +412,23 @@ int compareFileItems(const void *a, const void *b) {
 }
 
 bool isExecutable(const char pathname[255], const char *extensions) {
-    char *pathCopy = strdup(pathname);
-    const char *token = strrchr(pathCopy, '.');
+    const char *ext = strrchr(pathname, '.');
+    if (!ext || !ext[1]) return false;
+    ++ext;
 
-    if (token == nullptr) {
-        return false;
-    }
-
-    token++;
-
-    while (token != NULL) {
-        if (strstr(extensions, token) != NULL) {
-            free(pathCopy);
+    /* This is called for every directory entry on every Demo advance.  Do not
+       allocate a temporary copy: the old no-extension return leaked strdup()
+       and repeated directory scans could exhaust the heap deterministically. */
+    const size_t ext_len = strlen(ext);
+    const char *candidate = extensions;
+    while (*candidate) {
+        const char *end = strchr(candidate, ',');
+        const size_t len = end ? (size_t)(end - candidate) : strlen(candidate);
+        if (len == ext_len && !strncmp(candidate, ext, len))
             return true;
-        }
-        token = strtok(NULL, ",");
+        if (!end) break;
+        candidate = end + 1;
     }
-    free(pathCopy);
     return false;
 }
 

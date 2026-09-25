@@ -29,23 +29,6 @@
 
 #include "audio.h"
 
-#ifndef AUDIO_PWM
-#include "hardware/irq.h"
-
-static i2s_config_t *i2s_dma_irq_config = NULL;
-
-/* Keep the I2S PIO fed even when the producer misses a DMA boundary. */
-static void __not_in_flash_func(i2s_dma_irq1_handler)(void) {
-    i2s_config_t *cfg = i2s_dma_irq_config;
-    if (!cfg) return;
-
-    const uint32_t mask = 1u << cfg->dma_channel;
-    if (!(dma_hw->ints1 & mask)) return;
-    dma_hw->ints1 = mask;
-    i2s_dma_pump(cfg);
-}
-#endif
-
 #ifdef AUDIO_PWM
 #include "hardware/pwm.h"
 #include "hardware/clocks.h"
@@ -159,16 +142,6 @@ void i2s_init(i2s_config_t *i2s_config) {
                           i2s_config->dma_trans_count,                // Number of 32 bits words to transfer
                           false                                       // Start immediately
     );
-
-#ifndef AUDIO_PWM
-    /* Audio owns DMA IRQ1 and pre-empts the software-TV line renderer. */
-    i2s_dma_irq_config = i2s_config;
-    dma_hw->ints1 = 1u << i2s_config->dma_channel;
-    irq_set_exclusive_handler(DMA_IRQ_1, i2s_dma_irq1_handler);
-    irq_set_priority(DMA_IRQ_1, 0x00);
-    dma_channel_set_irq1_enabled(i2s_config->dma_channel, true);
-    irq_set_enabled(DMA_IRQ_1, true);
-#endif
 
     pio_sm_set_enabled(i2s_config->pio, i2s_config->sm , true);
 }

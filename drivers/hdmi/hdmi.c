@@ -108,6 +108,7 @@ static const struct pio_program program_PIO_HDMI = {
     .origin = -1,
 };
 
+__scratch_y("get_ser_diff_data")
 static uint64_t get_ser_diff_data(const uint16_t dataR, const uint16_t dataG, const uint16_t dataB) {
     uint64_t out64 = 0;
     for (int i = 0; i < 10; i++) {
