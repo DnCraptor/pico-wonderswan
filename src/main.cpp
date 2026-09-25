@@ -456,15 +456,12 @@ bool filebrowser_loadfile(const char pathname[256]) {
 
     draw_text("Loading...", window_x + 1, window_y + 2, 10, 1);
 
+    const bool psram_available = wonderswan_qspi_psram_available();
+    const size_t psram_capacity = psram_available ? wonderswan_qspi_rom_capacity() : 0;
+    const bool use_psram = psram_available && load_size <= psram_capacity;
     bool load_ok = false;
-    if (wonderswan_qspi_psram_available()) {
-        const size_t capacity = wonderswan_qspi_rom_capacity();
-        if (load_size > capacity) {
-            draw_text("ERROR: ROM too large for PSRAM!", window_x + 1, window_y + 2, 13, 1);
-            sleep_ms(demo_active ? 1500 : 5000);
-            return false;
-        }
 
+    if (use_psram) {
         if (FR_OK == f_open(&file, pathname, FA_READ)) {
             uint8_t *dst = (uint8_t *)WONDERSWAN_QSPI_PSRAM_BASE;
             uint32_t total_read = 0;
@@ -477,6 +474,8 @@ bool filebrowser_loadfile(const char pathname[256]) {
             load_ok = read_result == FR_OK && total_read == load_size;
             f_close(&file);
         }
+        if (load_ok)
+            rom = WONDERSWAN_QSPI_PSRAM_BASE;
     } else {
         const uint32_t firmware_end = (uint32_t)((uintptr_t)&__flash_binary_end - XIP_BASE);
         if (firmware_end > FLASH_TARGET_OFFSET) {
@@ -487,7 +486,9 @@ bool filebrowser_loadfile(const char pathname[256]) {
 
         const uint32_t flash_size = detect_flash_size_bytes();
         if (FLASH_TARGET_OFFSET >= flash_size || load_size > flash_size - FLASH_TARGET_OFFSET) {
-            draw_text("ERROR: ROM too large for flash!", window_x + 1, window_y + 2, 13, 1);
+            draw_text(psram_available ? "ERROR: ROM too large for PSRAM/flash!"
+                                      : "ERROR: ROM too large for flash!",
+                      window_x + 1, window_y + 2, 13, 1);
             sleep_ms(demo_active ? 1500 : 5000);
             return false;
         }
@@ -528,6 +529,8 @@ bool filebrowser_loadfile(const char pathname[256]) {
                 flash_target_offset += FLASH_SECTOR_SIZE;
             } while (bytes_read != 0);
             f_close(&file);
+        } else {
+            read_result = FR_NO_FILE;
         }
 
         if (need_clock_restore && !temporary_flash_reclock(original_sys_khz))
@@ -535,6 +538,8 @@ bool filebrowser_loadfile(const char pathname[256]) {
 
         gpio_put(PICO_DEFAULT_LED_PIN, true);
         load_ok = read_result == FR_OK && total_read == load_size;
+        if (load_ok)
+            rom = XIP_BASE + FLASH_TARGET_OFFSET;
     }
 
     if (!load_ok) {
@@ -543,6 +548,8 @@ bool filebrowser_loadfile(const char pathname[256]) {
         return false;
     }
 
+    /* Commit cartridge identity only after the selected backing store contains
+       the complete ROM. A failed attempt leaves the next browser selection clean. */
     rom_size = load_size;
     strcpy(filename, fileinfo.fname);
     return true;
