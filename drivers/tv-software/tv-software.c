@@ -429,6 +429,21 @@ void graphics_set_palette(uint8_t i, uint32_t color888) {
 
 
 //основная функция заполнения буферов видеоданных
+/* RAM-resident byte fill for the __time_critical path. memset() lives in
+   flash, so calling it from here stalls on XIP and evicts the main program's
+   cached code; this stays in SRAM. optimize(no-tree-loop-distribute-patterns)
+   stops the compiler folding the loop back into a memset call. Word-wide, so
+   it is also faster than the byte memset it replaces. */
+__attribute__((optimize("no-tree-loop-distribute-patterns")))
+static void __not_in_flash_func(tv_fill8)(uint8_t* d, uint8_t v, int n) {
+    while (((uintptr_t)d & 3u) && n > 0) { *d++ = v; --n; }
+    const uint32_t w = (uint32_t)v * 0x01010101u;
+    uint32_t* p = (uint32_t*)d;
+    for (int k = n >> 2; k > 0; --k) *p++ = w;
+    d = (uint8_t*)p;
+    for (n &= 3; n > 0; --n) *d++ = v;
+}
+
 static bool __time_critical_func(video_timer_callbackTV)(repeating_timer_t* rt) {
     static uint dma_inx_out = 0;
     static uint lines_buf_inx = 0;
@@ -887,9 +902,13 @@ static bool __time_critical_func(video_timer_callbackTV)(repeating_timer_t* rt) 
 
             if ((y >= 240) || (y < 0) || (input_buffer == NULL)) {
                 //вне изображения
-                memset(output_buffer8, video_mode.LVL_BLACK_TMPL, video_mode.img_W);
+                tv_fill8(output_buffer8, video_mode.LVL_BLACK_TMPL, video_mode.img_W);
             }
             else {
+                /* Clear the full active width before rendering (fast,
+                   RAM-resident tv_fill8 - never memset() from this path).
+                   Kills the top-right ping-pong artifact without touching XIP. */
+                tv_fill8(output_buffer8, video_mode.LVL_BLACK_TMPL, video_mode.img_W);
                 //зона изображения
                 //цветовая вспышка(тест в зоне изображения)
                 // if (li)	memcpy(out_buf8-v_mode.begin_img_shx+22*4,cb[1],40);
@@ -985,23 +1004,13 @@ static bool __time_critical_func(video_timer_callbackTV)(repeating_timer_t* rt) 
                 }
                 else
                 */
-                /* Horizontal scale from the ACTUAL frame width (WonderSwan
-                   is 224 px), not a fixed console constant: stretch the source
-                   across the whole active line (img_W - d_end) so the picture
-                   fills the screen instead of leaving a black margin on the
-                   right. Graphics mode only - the text renderer ignores di. */
-                if (graphics_buffer.width && video_mode.img_W > d_end)
-                    di = (uint16_t)(((uint32_t)graphics_buffer.width << 8)
-                                    / (uint32_t)(video_mode.img_W - d_end));
-
                 if (input_buffer != NULL)
                     switch (tv_out_mode.mode_bpp) {
                         case TEXTMODE_DEFAULT: {
-                            /* Scale TEXTMODE_COLS glyph columns across the whole
-                               active line (img_W - d_end) with a fractional
-                               accumulator, so the full text row is shown at any
-                               TV width instead of a fixed pixel count that
-                               under- or over-runs the line buffer. */
+                            /* Match the graphics span exactly: img_W - d_end
+                               samples from +buffer_shift (the same span the
+                               image fills), so the menu is as wide as the
+                               picture. TEXTMODE_COLS cells stretched across it. */
                             const int out_width = video_mode.img_W - d_end;
                             const uint8_t* cell = text_buffer + (y / 8) * (TEXTMODE_COLS * 2);
                             const int glyph_y = y % 8;
