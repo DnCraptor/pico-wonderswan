@@ -191,6 +191,9 @@ static volatile bool filebrowser_page_up_requested = false;
 static volatile bool filebrowser_page_down_requested = false;
 static volatile bool filebrowser_help_requested = false;
 static volatile bool filebrowser_help_close_requested = false;
+static volatile bool filebrowser_return_requested = false;
+static volatile bool filebrowser_can_return_to_game = false;
+static volatile bool filebrowser_resumed_game = false;
 
 void process_kbd_report(hid_keyboard_report_t const* report, hid_keyboard_report_t const* prev_report) {
     /* printf("HID key report modifiers %2.2X report ", report->modifier);
@@ -246,8 +249,12 @@ void process_kbd_report(hid_keyboard_report_t const* report, hid_keyboard_report
             game_palette_save_requested = true;
         if (isInReport(report, HID_KEY_F9) && !isInReport(prev_report, HID_KEY_F9))
             palette_all_set_requested = 0;
-        if (isInReport(report, HID_KEY_F10) && !isInReport(prev_report, HID_KEY_F10))
-            filebrowser_direct_requested = true;
+        if (isInReport(report, HID_KEY_F10) && !isInReport(prev_report, HID_KEY_F10)) {
+            if (filebrowser_active && filebrowser_can_return_to_game)
+                filebrowser_return_requested = true;
+            else if (!filebrowser_active)
+                filebrowser_direct_requested = true;
+        }
     }
 
     /* F11 toggles Backplane; F12 toggles the palette editor. */
@@ -664,6 +671,8 @@ void filebrowser(const char pathname[256], const char executables[11]) {
             filebrowser_page_down_requested = false;
             filebrowser_help_requested = false;
             filebrowser_help_close_requested = false;
+            filebrowser_return_requested = false;
+            filebrowser_can_return_to_game = false;
         }
     } filebrowser_active_guard;
     bool debounce = true;
@@ -707,9 +716,15 @@ void filebrowser(const char pathname[256], const char executables[11]) {
         off += 6;
         draw_text(" Navigation    ", off, 29, 0, 3);
         off += 16;
-        draw_text("A/F10", off, 29, 7, 0);
-        off += 5;
+        draw_text("A", off, 29, 7, 0);
+        off += 1;
         draw_text(" USB DRV ", off, 29, 0, 3);
+        if (filebrowser_can_return_to_game) {
+            off += 9;
+            draw_text("F10", off, 29, 7, 0);
+            off += 3;
+            draw_text(" Return ", off, 29, 0, 3);
+        }
 #endif
 
         if (FR_OK != f_opendir(&dir, basepath)) {
@@ -757,6 +772,12 @@ void filebrowser(const char pathname[256], const char executables[11]) {
                 filebrowser_show_help();
                 /* Help overwrites the browser; rebuild this directory page. */
                 break;
+            }
+
+            if (filebrowser_return_requested && filebrowser_can_return_to_game) {
+                filebrowser_return_requested = false;
+                filebrowser_resumed_game = true;
+                return;
             }
 
             constexpr int half_page = per_page / 2;
@@ -2240,14 +2261,6 @@ static bool service_hotkeys(bool game_loaded) {
         if (mono_ws_rom_loaded(game_loaded) && game_palette_write())
             game_palette_linked = true;
     }
-    if (filebrowser_direct_requested) {
-        filebrowser_direct_requested = false;
-        if (game_loaded) {
-            demo_stop();
-            save_config();
-            reboot = true;
-        }
-    }
     const int8_t all = palette_all_set_requested;
     if (all >= 0) {
         palette_all_set_requested = -1;
@@ -2303,9 +2316,9 @@ static void menu(bool game_loaded) {
                was displayed before the menu (notably the ROM browser). */
             graphics_set_mode(TEXTMODE_DEFAULT);
         }
-        /* F10 sets reboot in service_hotkeys(); leave this modal menu so the
-           normal emulation-session exit path can enter the ROM browser. */
-        if (reboot)
+        /* F10 leaves the modal menu so main() can open the browser while the
+           current emulation core remains alive. */
+        if (reboot || (game_loaded && filebrowser_direct_requested))
             return;
         for (int i = 0; i < MENU_ITEMS_NUMBER; i++) {
             uint8_t y = i + (TEXTMODE_ROWS - MENU_ITEMS_NUMBER >> 1);
@@ -2587,6 +2600,7 @@ int main() {
     if (f_mount(&fs, "", 1) == FR_OK) f_mkdir("/tmp");
 
     bool need_browser = true;
+    bool rom_selected_from_live_browser = false;
     while (true) {
         if (need_browser) {
             graphics_set_mode(TEXTMODE_DEFAULT);
@@ -2679,6 +2693,41 @@ int main() {
                 fps_frames = 0;
                 graphics_set_fps_overlay(show_fps, 0);
             }
+            if (filebrowser_direct_requested) {
+                filebrowser_direct_requested = false;
+                demo_stop();
+                save_config();
+#ifdef HWAY
+                ws_audio_hway_silence();
+#endif
+                filebrowser_return_requested = false;
+                filebrowser_resumed_game = false;
+                filebrowser_can_return_to_game = true;
+                graphics_set_mode(TEXTMODE_DEFAULT);
+                filebrowser(HOME_DIR, "ws,wsc");
+                filebrowser_can_return_to_game = false;
+
+                if (filebrowser_resumed_game) {
+                    filebrowser_resumed_game = false;
+                    /* F10 -> browser -> F10: resume the same live core. */
+                    graphics_set_mode(GRAPHICSMODE_DEFAULT);
+                    apply_current_palette_to_video();
+                    fps_started = time_us_64();
+                    fps_frames = 0;
+                    graphics_set_fps_overlay(show_fps, 0);
+#if defined(VGA) || defined(HDMI)
+                    next_ws_frame = time_us_64() + 13250;
+#endif
+                    continue;
+                }
+
+                /* A ROM was explicitly selected in the browser. Its image is
+                   already loaded; end the old core and start that cartridge. */
+                rom_selected_from_live_browser = true;
+                reboot = true;
+                continue;
+            }
+
             update_palette_overlay();
 
             ws_key_start = gamepad1_bits.start;
@@ -2915,7 +2964,12 @@ int main() {
 
         /* Never let stale Demo state leak into the browser. */
         demo_stop();
-        need_browser = true;
+        if (rom_selected_from_live_browser) {
+            rom_selected_from_live_browser = false;
+            need_browser = false;
+        } else {
+            need_browser = true;
+        }
     }
     __unreachable();
 }
