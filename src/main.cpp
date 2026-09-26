@@ -1163,16 +1163,42 @@ static bool state_read_cart(FIL *fd, uint32_t base, uint32_t size) {
     return true;
 }
 
+static void config_mkdirs(void);
+
+static bool state_path(char *path, size_t size, int slot) {
+    static const char dir[] = "/.config/wonderswan/saves/";
+    char suffix[16];
+    const int suffix_len = snprintf(suffix, sizeof(suffix), "_%d.save", slot);
+    if (suffix_len <= 0) return false;
+
+    const size_t dir_len = strlen(dir);
+    const size_t name_len = strlen(filename);
+    if (dir_len + (size_t)suffix_len + 1 >= size) return false;
+    const size_t name_budget = size - dir_len - (size_t)suffix_len - 1;
+
+    if (name_len <= name_budget)
+        return snprintf(path, size, "%s%s%s", dir, filename, suffix) > 0;
+
+    /* Keep both ends: similar ROM names usually differ in region/revision tags
+       near the end, while the beginning still identifies the game. */
+    if (name_budget < 3) return false;
+    const size_t left = (name_budget - 1) / 2;
+    const size_t right = name_budget - 1 - left;
+    return snprintf(path, size, "%s%.*s~%s%s", dir, (int)left, filename,
+                    filename + name_len - right, suffix) > 0;
+}
+
 bool save() {
     if (!rom_size || save_slot < 1 || save_slot > 8) return false;
     char pathname[255];
-    snprintf(pathname, sizeof(pathname), "%s\\%s_%d.save", HOME_DIR, filename, save_slot);
+    if (!state_path(pathname, sizeof(pathname), save_slot)) return false;
     ws_state_core_t *state = (ws_state_core_t *)malloc(sizeof(*state));
     if (!state) return false;
     nec_snapshot_get(&state->cpu); ws_io_snapshot_get(&state->io); ws_gpu_snapshot_get(&state->gpu); ws_audio_snapshot_get(&state->audio);
     ws_state_header_t h = { WS_STATE_MAGIC, WS_STATE_VERSION, (uint32_t)rom_size, memory_getRomCrc(), 0,
         sizeof(internalRam), ws_memory_get_sram_size(), ws_memory_get_eeprom_size(), sizeof(state->cpu), sizeof(state->io), sizeof(state->gpu), sizeof(state->audio), ws_cycles, ws_skip, ws_cyclesByLine };
     if (f_mount(&fs, "", 1) != FR_OK) { free(state); return false; }
+    config_mkdirs();
     if (f_open(&file, pathname, FA_CREATE_ALWAYS | FA_WRITE) != FR_OK) { free(state); return false; }
     bool ok = state_write(&file, &h, sizeof(h)) && state_write(&file, &state->cpu, sizeof(state->cpu)) && state_write(&file, &state->io, sizeof(state->io)) && state_write(&file, &state->gpu, sizeof(state->gpu)) && state_write(&file, &state->audio, sizeof(state->audio)) && state_write(&file, internalRam, sizeof(internalRam)) && state_write_cart(&file, 1u << 20, h.sram_size) && state_write_cart(&file, 0, h.eeprom_size);
     if (ok) ok = f_sync(&file) == FR_OK;
@@ -1185,7 +1211,7 @@ bool save() {
 bool load() {
     if (!rom_size || save_slot < 1 || save_slot > 8) return false;
     char pathname[255];
-    snprintf(pathname, sizeof(pathname), "%s\\%s_%d.save", HOME_DIR, filename, save_slot);
+    if (!state_path(pathname, sizeof(pathname), save_slot)) return false;
     if (f_mount(&fs, "", 1) != FR_OK) return false;
     if (f_open(&file, pathname, FA_READ) != FR_OK) return false;
     ws_state_header_t h; bool ok = state_read(&file, &h, sizeof(h));
@@ -1606,6 +1632,7 @@ static void config_mkdirs(void) {
     char path[96];
     f_mkdir("/.config");
     f_mkdir("/.config/wonderswan");
+    f_mkdir("/.config/wonderswan/saves");
     snprintf(path, sizeof(path), "/.config/wonderswan/%s", config_video_name());
     f_mkdir(path);
 }

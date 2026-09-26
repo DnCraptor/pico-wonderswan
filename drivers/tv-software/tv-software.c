@@ -184,7 +184,11 @@ void graphics_set_modeTV(tv_out_mode_t mode) {
     }
 
     video_mode.H_len = ((color_freq * 4) / 1e6) * 63.9;
-    video_mode.H_len &= 0xfffffff8;
+    /* Round the line length to the NEAREST multiple of 8, not down. PAL's ideal
+       (~1133 samples) floored to 1128 makes the line ~0.6% short (15722 Hz line /
+       50.31 Hz field) and a PAL set won't lock; rounding to 1136 gives 64.06 us /
+       49.96 Hz. NTSC is 912 either way, so this only changes PAL. */
+    video_mode.H_len = (video_mode.H_len + 4) & 0xfffffff8;
 
     video_mode.sync_size = 4.7 * video_mode.H_len / 64;
     video_mode.sync_size &= 0xfffffff8;
