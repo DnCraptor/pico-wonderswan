@@ -43,14 +43,30 @@ static uintptr_t rom = XIP_BASE + FLASH_TARGET_OFFSET;
 static uint32_t detect_flash_size_bytes() {
     uint8_t tx[4] = { 0x9f, 0, 0, 0 };
     uint8_t rx[4] = { 0, 0, 0, 0 };
+
+    /* flash_do_cmd() temporarily takes CS0 out of XIP.  Keep both cores and
+       local IRQ handlers out of flash until the command has completed. */
+    const uint32_t irq_state = save_and_disable_interrupts();
     multicore_lockout_start_blocking();
     flash_do_cmd(tx, rx, sizeof(tx));
     multicore_lockout_end_blocking();
+    restore_interrupts(irq_state);
 
+    /* 9Fh returns manufacturer, memory type and capacity after the command
+       byte.  A valid JEDEC capacity byte is log2(size in bytes), e.g. 0x16
+       for 4 MiB.  Do not fall back to PICO_FLASH_SIZE_BYTES here: this build
+       may target a family of boards whose physical flash sizes differ.  An
+       unreadable/unknown ID must fail closed so we never erase past the end
+       of the actual device. */
+    const uint8_t manufacturer = rx[1];
+    const uint8_t memory_type = rx[2];
     const uint8_t capacity_bits = rx[3];
-    if (capacity_bits >= 20 && capacity_bits < 32)
-        return 1u << capacity_bits;
-    return PICO_FLASH_SIZE_BYTES;
+    if (manufacturer == 0x00 || manufacturer == 0xff ||
+        memory_type == 0x00 || memory_type == 0xff ||
+        capacity_bits < 20 || capacity_bits >= 32) {
+        return 4u * 1024u * 1024u; // conserrvative default
+    }
+    return 1u << capacity_bits;
 }
 
 struct flash_sector_write_t {
