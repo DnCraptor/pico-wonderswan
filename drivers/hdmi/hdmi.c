@@ -318,7 +318,7 @@ static void __scratch_y("hdmi_driver") dma_handler_HDMI() {
             for (const char *p = graphics_fps_overlay_text; *p; ++p) {
                 uint8_t bits = font_6x8[(uint8_t)*p * 8u + glyph_row];
                 for (unsigned bit = 0; bit < 6; ++bit) {
-                    if (bits & 1u) dst[bit] = graphics_overlay_palette_index;
+                    dst[bit] = (bits & 1) ? 0 : 15;
                     bits >>= 1;
                 }
                 dst += 6;
@@ -338,7 +338,7 @@ static void __scratch_y("hdmi_driver") dma_handler_HDMI() {
                 for (const char *q = graphics_demo_overlay_text; *q; ++q) {
                     uint8_t bits = font_6x8[(uint8_t)*q * 8u + glyph_row];
                     for (unsigned bit = 0; bit < 6; ++bit) {
-                        if (bits & 1u) dst[bit] = graphics_overlay_palette_index;
+                        dst[bit] = (bits & 1) ? 0 : 15;
                         bits >>= 1;
                     }
                     dst += 6;

@@ -356,10 +356,10 @@ typedef struct __attribute__((__packed__)) {
     bool is_directory;
     bool is_executable;
     size_t size;
-    char filename[79];
+    char filename[256];
 } file_item_t;
 
-constexpr int max_files = 320;
+constexpr int max_files = 103;
 file_item_t *fileItems = (file_item_t *) (&SCREEN1[0][0] + TEXTMODE_COLS * TEXTMODE_ROWS * 2);
 static FIL file;
 
@@ -367,7 +367,7 @@ static bool demo_requested = false;
 static bool demo_active = false;
 static bool demo_advance_pending = false;
 static uint64_t demo_game_started_at = 0;
-static char demo_current_name[79] = { 0 };
+static char demo_current_name[256] = { 0 };
 static uint8_t demo_duration = 0;
 static const uint16_t demo_seconds[] = { 15, 30, 45, 60, 120, 180, 300, 600 };
 static uint64_t palette_overlay_until = 0;
@@ -581,7 +581,8 @@ static bool demo_load_next_rom(const char *after_name) {
     if (FR_OK != f_mount(&fs, "SD", 1))
         return false;
 
-    char after[79] = { 0 };
+    static char after[256];
+    after[0] = '\0';
     if (after_name) {
         strncpy(after, after_name, sizeof(after) - 1);
         after[sizeof(after) - 1] = '\0';
@@ -595,11 +596,14 @@ static bool demo_load_next_rom(const char *after_name) {
         if (FR_OK != f_opendir(&dir, HOME_DIR))
             return false;
 
-        char best[79] = { 0 };
+        static char best[256];
+        best[0] = '\0';
         while (f_readdir(&dir, &info) == FR_OK && info.fname[0] != '\0') {
             if (info.fattrib & AM_DIR)
                 continue;
             if (!isExecutable(info.fname, "ws,wsc"))
+                continue;
+            if (strlen(info.fname) >= sizeof(best))
                 continue;
             if (after[0] && strcmp(info.fname, after) <= 0)
                 continue;
@@ -761,7 +765,7 @@ void filebrowser(const char pathname[256], const char executables[11]) {
             fileItems[total_files].is_directory = fileInfo.fattrib & AM_DIR;
             fileItems[total_files].size = fileInfo.fsize;
             fileItems[total_files].is_executable = isExecutable(fileInfo.fname, executables);
-            strncpy(fileItems[total_files].filename, fileInfo.fname, 78);
+            strncpy(fileItems[total_files].filename, fileInfo.fname, sizeof(fileItems[total_files].filename) - 1);
             total_files++;
         }
         f_closedir(&dir);
