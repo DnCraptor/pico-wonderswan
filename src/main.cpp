@@ -446,6 +446,9 @@ bool isExecutable(const char pathname[255], const char *extensions) {
     return false;
 }
 
+#if PICO_RP2350
+static void set_flash_timing_for_clock(uint32_t sys_hz);
+#endif
 static bool temporary_flash_reclock(uint32_t target_khz);
 static void menu(bool game_loaded);
 
@@ -552,7 +555,18 @@ bool filebrowser_loadfile(const char pathname[256], bool show_ui = true) {
                 if (memcmp(flash_data, buffer, sizeof(buffer)) != 0) {
                     const uint32_t ints = save_and_disable_interrupts();
                     flash_range_erase(flash_target_offset, FLASH_SECTOR_SIZE);
+#if PICO_RP2350 && ZERO
+                    /* RP2350 flash APIs restore the boot-time XIP setup. Z2 runs
+                       CS0 with a stricter runtime timing, so put that timing back
+                       before executing the next flash operation. */
+                    set_flash_timing_for_clock(clock_get_hz(clk_sys));
+#endif
                     flash_range_program(flash_target_offset, buffer, FLASH_SECTOR_SIZE);
+#if PICO_RP2350 && ZERO
+                    /* flash_range_program() restores XIP once more. Re-apply the
+                       Z2 runtime timing before returning to normal XIP accesses. */
+                    set_flash_timing_for_clock(clock_get_hz(clk_sys));
+#endif
                     restore_interrupts(ints);
 
                     if (memcmp(flash_data, buffer, sizeof(buffer)) != 0) {
