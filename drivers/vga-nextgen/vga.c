@@ -320,25 +320,14 @@ void __time_critical_func() dma_handler_VGA() {
         uint16_t *dst = (uint16_t *)(*output_buffer) + shift_picture / 2 + 2;
         /* Each uint16_t carries two VGA pixels. Duplicate the 8-bit sample
          * so HSYNC/VSYNC bits 7:6 remain valid in both pixels. */
-        const uint16_t overlay_color =
-            (uint16_t)(txt_palette[graphics_overlay_palette_index] & 0xffu) * 0x0101u;
+        const uint16_t overlay_color = (uint16_t)(txt_palette[0] & 0xffu) * 0x0101u;
+        const uint16_t overlay_bg_color = (uint16_t)(txt_palette[15] & 0xffu) * 0x0101u;
         const unsigned glyph_row = (unsigned)y - 2u;
-
-        /* The same VGA line template is reused for later scanlines. Clear
-         * the complete overlay rectangle before drawing this glyph row,
-         * otherwise lit pixels from earlier rows accumulate vertically. */
-        const size_t overlay_words = strlen(graphics_fps_overlay_text) * 6u;
-        uint32_t *clear = (uint32_t *)dst;
-        const uint32_t p_i = ((line_number & is_flash_line) +
-                              (frame_number & is_flash_frame)) & 1u;
-        const uint32_t border = bg_color[p_i];
-        for (size_t i = 0; i < overlay_words / 2u; ++i)
-            clear[i] = border;
 
         for (const char *p = graphics_fps_overlay_text; *p; ++p) {
             uint8_t bits = font_6x8[(uint8_t)*p * 8u + glyph_row];
             for (unsigned bit = 0; bit < 6; ++bit) {
-                if (bits & 1u) dst[bit] = overlay_color;
+                dst[bit] = (bits & 1u) ? overlay_color : overlay_bg_color;
                 bits >>= 1;
             }
             dst += 6;
@@ -354,19 +343,20 @@ void __time_critical_func() dma_handler_VGA() {
         const int text_x = ((int)visible_line_size - (int)len * 6) / 2;
         if (text_x >= 0) {
             uint16_t *dst = (uint16_t *)(*output_buffer) + shift_picture / 2 + text_x;
-            const uint16_t overlay_color =
-                (uint16_t)(txt_palette[graphics_overlay_palette_index] & 0xffu) * 0x0101u;
+            const uint16_t overlay_color = (uint16_t)(txt_palette[0] & 0xffu) * 0x0101u;
+            const uint16_t overlay_bg_color = (uint16_t)(txt_palette[15] & 0xffu) * 0x0101u;
             const unsigned glyph_row = (unsigned)(output_y - (N_lines_visible / 2 - 10));
             for (const char *q = graphics_demo_overlay_text; *q; ++q) {
                 uint8_t bits = font_6x8[(uint8_t)*q * 8u + glyph_row];
                 for (unsigned bit = 0; bit < 6; ++bit) {
-                    if (bits & 1u) dst[bit] = overlay_color;
+                    dst[bit] = (bits & 1u) ? overlay_color : overlay_bg_color;
                     bits >>= 1;
                 }
                 dst += 6;
             }
         }
     }
+
     dma_channel_set_read_addr(dma_chan_ctrl, output_buffer, false);
 }
 

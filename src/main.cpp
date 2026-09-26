@@ -378,6 +378,11 @@ typedef struct __attribute__((__packed__)) {
 constexpr int max_files = 103;
 file_item_t *fileItems = (file_item_t *) (&SCREEN1[0][0] + TEXTMODE_COLS * TEXTMODE_ROWS * 2);
 static FIL file;
+/* Shared FatFs workspace. Browser and Demo never run concurrently, so reuse
+   the browser storage instead of putting another DIR/FILINFO/path on stack. */
+static DIR fs_dir;
+static FILINFO fs_info;
+static char fs_path[256];
 
 static bool demo_requested = false;
 static bool demo_active = false;
@@ -464,8 +469,7 @@ bool filebrowser_loadfile(const char pathname[256], bool show_ui = true) {
     if (show_ui)
         draw_window("Loading ROM", window_x, window_y, 43, 5);
 
-    FILINFO fileinfo;
-    if (FR_OK != f_stat(pathname, &fileinfo) || fileinfo.fsize == 0) {
+    if (FR_OK != f_stat(pathname, &fs_info) || fs_info.fsize == 0) {
         if (show_ui) {
             draw_text("ERROR: ROM not found or empty!", window_x + 1, window_y + 2, 13, 1);
             sleep_ms(demo_active ? 1500 : 5000);
@@ -473,7 +477,7 @@ bool filebrowser_loadfile(const char pathname[256], bool show_ui = true) {
         return false;
     }
 
-    const uint32_t load_size = fileinfo.fsize;
+    const uint32_t load_size = fs_info.fsize;
     if (((16384 - 64) << 10) < load_size) {
         if (show_ui) {
             draw_text("ERROR: ROM too large! Canceled!!", window_x + 1, window_y + 2, 13, 1);
@@ -588,7 +592,7 @@ bool filebrowser_loadfile(const char pathname[256], bool show_ui = true) {
     /* Commit cartridge identity only after the selected backing store contains
        the complete ROM. A failed attempt leaves the next browser selection clean. */
     rom_size = load_size;
-    strcpy(filename, fileinfo.fname);
+    strcpy(filename, fs_info.fname);
     return true;
 }
 
@@ -607,34 +611,31 @@ static bool demo_load_next_rom(const char *after_name) {
     /* Find the next name alphabetically. If a ROM fails to load, advance
        past it instead of dropping out of Demo mode. */
     for (;;) {
-        DIR dir;
-        FILINFO info;
-        if (FR_OK != f_opendir(&dir, HOME_DIR))
+        if (FR_OK != f_opendir(&fs_dir, HOME_DIR))
             return false;
 
         static char best[256];
         best[0] = '\0';
-        while (f_readdir(&dir, &info) == FR_OK && info.fname[0] != '\0') {
-            if (info.fattrib & AM_DIR)
+        while (f_readdir(&fs_dir, &fs_info) == FR_OK && fs_info.fname[0] != '\0') {
+            if (fs_info.fattrib & AM_DIR)
                 continue;
-            if (!isExecutable(info.fname, "ws,wsc"))
+            if (!isExecutable(fs_info.fname, "ws,wsc"))
                 continue;
-            if (strlen(info.fname) >= sizeof(best))
+            if (strlen(fs_info.fname) >= sizeof(best))
                 continue;
-            if (after[0] && strcmp(info.fname, after) <= 0)
+            if (after[0] && strcmp(fs_info.fname, after) <= 0)
                 continue;
-            if (!best[0] || strcmp(info.fname, best) < 0) {
-                strncpy(best, info.fname, sizeof(best) - 1);
+            if (!best[0] || strcmp(fs_info.fname, best) < 0) {
+                strncpy(best, fs_info.fname, sizeof(best) - 1);
                 best[sizeof(best) - 1] = '\0';
             }
         }
-        f_closedir(&dir);
+        f_closedir(&fs_dir);
         if (!best[0])
             return false;
 
-        char pathname[256];
-        snprintf(pathname, sizeof(pathname), "%s\\%s", HOME_DIR, best);
-        if (filebrowser_loadfile(pathname, false)) {
+        snprintf(fs_path, sizeof(fs_path), "%s\\%s", HOME_DIR, best);
+        if (filebrowser_loadfile(fs_path, false)) {
             strncpy(demo_current_name, best, sizeof(demo_current_name) - 1);
             demo_current_name[sizeof(demo_current_name) - 1] = '\0';
             demo_game_started_at = time_us_64();
@@ -713,13 +714,10 @@ void filebrowser(const char pathname[256], const char executables[11]) {
     bool demo_debounce = false;
     /* filebrowser() remains on the stack while menu(false) is open.  Keep its
        sizeable work buffers out of that nested call chain. */
-    static char basepath[256];
     static char tmp[TEXTMODE_COLS + 1];
-    strcpy(basepath, pathname);
+    strcpy(fs_path, pathname);
     constexpr int per_page = TEXTMODE_ROWS - 3;
 
-    static DIR dir;
-    static FILINFO fileInfo;
 
     if (FR_OK != f_mount(&fs, "SD", 1)) {
         draw_text("SD Card not inserted or SD Card error!", 0, 0, 12, 0);
@@ -730,7 +728,7 @@ void filebrowser(const char pathname[256], const char executables[11]) {
         memset(fileItems, 0, sizeof(file_item_t) * max_files);
         int total_files = 0;
 
-        snprintf(tmp, TEXTMODE_COLS, "SD:\\%s", basepath);
+        snprintf(tmp, TEXTMODE_COLS, "SD:\\%s", fs_path);
         draw_window(tmp, 0, 0, TEXTMODE_COLS, TEXTMODE_ROWS - 1);
         memset(tmp, ' ', TEXTMODE_COLS);
 
@@ -761,30 +759,30 @@ void filebrowser(const char pathname[256], const char executables[11]) {
         }
 #endif
 
-        if (FR_OK != f_opendir(&dir, basepath)) {
+        if (FR_OK != f_opendir(&fs_dir, fs_path)) {
             draw_text("Failed to open directory", 1, 1, 4, 0);
             while (true);
         }
 
-        if (strlen(basepath) > 0) {
+        if (strlen(fs_path) > 0) {
             strcpy(fileItems[total_files].filename, "..\0");
             fileItems[total_files].is_directory = true;
             fileItems[total_files].size = 0;
             total_files++;
         }
 
-        while (f_readdir(&dir, &fileInfo) == FR_OK &&
-               fileInfo.fname[0] != '\0' &&
+        while (f_readdir(&fs_dir, &fs_info) == FR_OK &&
+               fs_info.fname[0] != '\0' &&
                total_files < max_files
                 ) {
             // Set the file item properties
-            fileItems[total_files].is_directory = fileInfo.fattrib & AM_DIR;
-            fileItems[total_files].size = fileInfo.fsize;
-            fileItems[total_files].is_executable = isExecutable(fileInfo.fname, executables);
-            strncpy(fileItems[total_files].filename, fileInfo.fname, sizeof(fileItems[total_files].filename) - 1);
+            fileItems[total_files].is_directory = fs_info.fattrib & AM_DIR;
+            fileItems[total_files].size = fs_info.fsize;
+            fileItems[total_files].is_executable = isExecutable(fs_info.fname, executables);
+            strncpy(fileItems[total_files].filename, fs_info.fname, sizeof(fileItems[total_files].filename) - 1);
             total_files++;
         }
-        f_closedir(&dir);
+        f_closedir(&fs_dir);
 
         qsort(fileItems, total_files, sizeof(file_item_t), compareFileItems);
 
@@ -896,20 +894,20 @@ void filebrowser(const char pathname[256], const char executables[11]) {
 
                 if (file_at_cursor.is_directory) {
                     if (strcmp(file_at_cursor.filename, "..") == 0) {
-                        const char *lastBackslash = strrchr(basepath, '\\');
+                        const char *lastBackslash = strrchr(fs_path, '\\');
                         if (lastBackslash != nullptr) {
-                            const size_t length = lastBackslash - basepath;
-                            basepath[length] = '\0';
+                            const size_t length = lastBackslash - fs_path;
+                            fs_path[length] = '\0';
                         }
                     } else {
-                        sprintf(basepath, "%s\\%s", basepath, file_at_cursor.filename);
+                        sprintf(fs_path, "%s\\%s", fs_path, file_at_cursor.filename);
                     }
                     debounce = false;
                     break;
                 }
 
                 if (file_at_cursor.is_executable) {
-                    sprintf(tmp, "%s\\%s", basepath, file_at_cursor.filename);
+                    sprintf(tmp, "%s\\%s", fs_path, file_at_cursor.filename);
 
                     if (filebrowser_loadfile(tmp)) {
                         return;
