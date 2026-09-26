@@ -564,7 +564,9 @@ bool filebrowser_loadfile(const char pathname[256], bool show_ui = true) {
                 }
 
                 total_read += bytes_read;
+                #ifdef PICO_DEFAULT_LED_PIN
                 gpio_put(PICO_DEFAULT_LED_PIN, flash_target_offset >> 13 & 1);
+                #endif
                 flash_target_offset += FLASH_SECTOR_SIZE;
             } while (bytes_read != 0);
             f_close(&file);
@@ -575,7 +577,9 @@ bool filebrowser_loadfile(const char pathname[256], bool show_ui = true) {
         if (need_clock_restore && !temporary_flash_reclock(original_sys_khz))
             read_result = FR_DISK_ERR;
 
+        #ifdef PICO_DEFAULT_LED_PIN
         gpio_put(PICO_DEFAULT_LED_PIN, true);
+        #endif
         load_ok = read_result == FR_OK && total_read == load_size;
         if (load_ok)
             rom = XIP_BASE + FLASH_TARGET_OFFSET;
@@ -1050,15 +1054,30 @@ static void reclock_drivers(void) {
 }
 
 static bool temporary_flash_reclock(uint32_t target_khz) {
-    /* Flash programming uses a temporary CPU clock only.  Do not touch QMI,
-       video/audio/SD dividers, voltage, or any other runtime driver here.
-       Their settings remain valid again as soon as clk_sys is restored. */
     const uint32_t current_khz = clock_get_hz(clk_sys) / 1000u;
     if (current_khz == target_khz) return true;
 
     const uint32_t irq_state = save_and_disable_interrupts();
     if (runtime_drivers_ready) multicore_lockout_start_blocking();
-    const bool res = set_target_sys_clock(target_khz);
+
+    bool res;
+#if PICO_RP2350
+    /* Keep QMI0 within its flash-frequency limit throughout the transition.
+       When slowing down, the old high-clock timing is already safe, so change
+       clk_sys first.  When speeding up, install the target timing before the
+       faster clock becomes active. */
+    if (target_khz < current_khz) {
+        res = set_target_sys_clock(target_khz);
+        if (res) set_flash_timing_for_clock(target_khz * 1000u);
+    } else {
+        set_flash_timing_for_clock(target_khz * 1000u);
+        res = set_target_sys_clock(target_khz);
+        if (!res) set_flash_timing_for_clock(current_khz * 1000u);
+    }
+#else
+    res = set_target_sys_clock(target_khz);
+#endif
+
     if (runtime_drivers_ready) multicore_lockout_end_blocking();
     restore_interrupts(irq_state);
     return res;
@@ -2641,25 +2660,29 @@ int main() {
             tight_loop_contents();
     }
 
+#ifdef PICO_DEFAULT_LED_PIN
     gpio_init(PICO_DEFAULT_LED_PIN);
     gpio_set_dir(PICO_DEFAULT_LED_PIN, GPIO_OUT);
+#endif
 
 #if PICO_RP2350
-    if (wonderswan_qspi_psram_init()) {
-        rom = WONDERSWAN_QSPI_PSRAM_BASE;
-    } else
+ //   if (wonderswan_qspi_psram_init()) {
+   //     rom = WONDERSWAN_QSPI_PSRAM_BASE;
+  //  } else
 #endif
     {
         // Keep the legacy SPI PSRAM path for cartridge SRAM/EEPROM on boards
         // without memory-mapped QSPI PSRAM.
         init_psram();
     }
+#ifdef PICO_DEFAULT_LED_PIN
     for (int i = 0; i < 6; i++) {
         sleep_ms(33);
         gpio_put(PICO_DEFAULT_LED_PIN, true);
         sleep_ms(33);
         gpio_put(PICO_DEFAULT_LED_PIN, false);
     }
+#endif
 
     bool need_browser = true;
     bool rom_selected_from_live_browser = false;
