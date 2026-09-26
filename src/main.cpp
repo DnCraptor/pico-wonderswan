@@ -376,6 +376,7 @@ static FIL file;
 static DIR fs_dir;
 static FILINFO fs_info;
 static char fs_path[256];
+static char filebrowser_last_dir[256] = { 0 };
 
 static bool demo_requested = false;
 static bool demo_active = false;
@@ -610,6 +611,17 @@ bool filebrowser_loadfile(const char pathname[256], bool show_ui = true) {
        the complete ROM. A failed attempt leaves the next browser selection clean. */
     rom_size = load_size;
     strcpy(filename, fs_info.fname);
+
+    /* Remember the directory of the successfully loaded cartridge.  filename
+       is shared by normal and Demo loads, so F10 can focus the current ROM in
+       either mode without a second filename buffer. */
+    strncpy(filebrowser_last_dir, pathname, sizeof(filebrowser_last_dir) - 1);
+    filebrowser_last_dir[sizeof(filebrowser_last_dir) - 1] = '\0';
+    char *last_slash = strrchr(filebrowser_last_dir, '\\');
+    if (last_slash)
+        *last_slash = '\0';
+    else
+        filebrowser_last_dir[0] = '\0';
     return true;
 }
 
@@ -714,7 +726,7 @@ static void filebrowser_show_help(void) {
     filebrowser_help_close_requested = false;
 }
 
-void filebrowser(const char pathname[256], const char executables[11]) {
+void filebrowser(const char pathname[256], const char executables[11], const char *focus_name = nullptr) {
     struct filebrowser_active_guard_t {
         filebrowser_active_guard_t() { filebrowser_active = true; }
         ~filebrowser_active_guard_t() {
@@ -809,6 +821,22 @@ void filebrowser(const char pathname[256], const char executables[11]) {
 
         int offset = 0;
         int current_item = 0;
+
+        /* F10 re-enters the browser focused on the currently loaded ROM.
+           Keep the selected row near the middle of the viewport when possible,
+           and clamp at the beginning/end so the item is always visible. */
+        if (focus_name && focus_name[0]) {
+            for (int i = 0; i < total_files; ++i) {
+                if (!fileItems[i].is_directory && !strcmp(fileItems[i].filename, focus_name)) {
+                    const int preferred_row = per_page / 2;
+                    offset = i > preferred_row ? i - preferred_row : 0;
+                    const int max_offset = total_files > per_page ? total_files - per_page : 0;
+                    if (offset > max_offset) offset = max_offset;
+                    current_item = i - offset;
+                    break;
+                }
+            }
+        }
 
         while (true) {
             sleep_ms(100);
@@ -2799,6 +2827,13 @@ int main() {
             }
             if (filebrowser_direct_requested) {
                 filebrowser_direct_requested = false;
+                /* filebrowser_loadfile() records both the directory and basename
+                   for normal and Demo loads. Preserve them before demo_stop()
+                   clears Demo-only presentation state. */
+                static char f10_dir[256];
+                strncpy(f10_dir, filebrowser_last_dir[0] ? filebrowser_last_dir : HOME_DIR,
+                        sizeof(f10_dir) - 1);
+                f10_dir[sizeof(f10_dir) - 1] = '\0';
                 demo_stop();
                 save_config();
 #ifdef HWAY
@@ -2808,7 +2843,7 @@ int main() {
                 filebrowser_resumed_game = false;
                 filebrowser_can_return_to_game = true;
                 graphics_set_mode(TEXTMODE_DEFAULT);
-                filebrowser(HOME_DIR, "ws,wsc");
+                filebrowser(f10_dir, "ws,wsc", filename);
                 filebrowser_can_return_to_game = false;
 
                 if (filebrowser_resumed_game) {
