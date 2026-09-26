@@ -40,6 +40,9 @@ extern char __flash_binary_end;
 #define FLASH_TARGET_OFFSET (2u * 1024u * 1024u)
 static uintptr_t rom = XIP_BASE + FLASH_TARGET_OFFSET;
 
+#if ZERO
+#define detect_flash_size_bytes() (16u << 20)
+#else
 static uint32_t detect_flash_size_bytes() {
     uint8_t tx[4] = { 0x9f, 0, 0, 0 };
     uint8_t rx[4] = { 0, 0, 0, 0 };
@@ -68,17 +71,7 @@ static uint32_t detect_flash_size_bytes() {
     }
     return 1u << capacity_bits;
 }
-
-struct flash_sector_write_t {
-    uint32_t offset;
-    const uint8_t *data;
-};
-
-static void program_flash_sector(void *param) {
-    const flash_sector_write_t *write = (const flash_sector_write_t *)param;
-    flash_range_erase(write->offset, FLASH_SECTOR_SIZE);
-    flash_range_program(write->offset, write->data, FLASH_SECTOR_SIZE);
-}
+#endif
 
 #define AUDIO_SAMPLE_RATE 24000
 #define AUDIO_BUFFER_LENGTH (AUDIO_SAMPLE_RATE / 60 + 1)
@@ -529,7 +522,8 @@ bool filebrowser_loadfile(const char pathname[256], bool show_ui = true) {
             }
             return false;
         }
-
+#define DOWNCLOCK_ALLOWED 1
+#if DOWNCLOCK_ALLOWED
         const uint32_t original_sys_khz = clock_get_hz(clk_sys) / 1000u;
         const bool need_clock_restore = original_sys_khz > 252000u;
         if (need_clock_restore && !temporary_flash_reclock(252000u)) {
@@ -539,11 +533,12 @@ bool filebrowser_loadfile(const char pathname[256], bool show_ui = true) {
             }
             return false;
         }
-
+#endif
         auto flash_target_offset = FLASH_TARGET_OFFSET;
         uint32_t total_read = 0;
         FRESULT read_result = FR_OK;
 
+        multicore_lockout_start_blocking();
         if (FR_OK == f_open(&file, pathname, FA_READ)) {
             static uint8_t buffer[FLASH_SECTOR_SIZE] __aligned(4);
             do {
@@ -555,9 +550,12 @@ bool filebrowser_loadfile(const char pathname[256], bool show_ui = true) {
                 const uint8_t *flash_data =
                     (const uint8_t *)(XIP_BASE + flash_target_offset);
                 if (memcmp(flash_data, buffer, sizeof(buffer)) != 0) {
-                    flash_sector_write_t write = { flash_target_offset, buffer };
-                    if (flash_safe_execute(program_flash_sector, &write, UINT32_MAX) != PICO_OK ||
-                        memcmp(flash_data, buffer, sizeof(buffer)) != 0) {
+                    const uint32_t ints = save_and_disable_interrupts();
+                    flash_range_erase(flash_target_offset, FLASH_SECTOR_SIZE);
+                    flash_range_program(flash_target_offset, buffer, FLASH_SECTOR_SIZE);
+                    restore_interrupts(ints);
+
+                    if (memcmp(flash_data, buffer, sizeof(buffer)) != 0) {
                         read_result = FR_DISK_ERR;
                         break;
                     }
@@ -573,10 +571,11 @@ bool filebrowser_loadfile(const char pathname[256], bool show_ui = true) {
         } else {
             read_result = FR_NO_FILE;
         }
-
+        multicore_lockout_end_blocking();
+#if DOWNCLOCK_ALLOWED
         if (need_clock_restore && !temporary_flash_reclock(original_sys_khz))
             read_result = FR_DISK_ERR;
-
+#endif
         #ifdef PICO_DEFAULT_LED_PIN
         gpio_put(PICO_DEFAULT_LED_PIN, true);
         #endif
@@ -2666,9 +2665,20 @@ int main() {
         gpio_put(PICO_DEFAULT_LED_PIN, false);
     }
 #endif
-
-    bool need_browser = true;
+    bool need_browser = false;
     bool rom_selected_from_live_browser = false;
+
+    /* Start directly in Demo mode. Demo owns ROM discovery/loading itself,
+       so do not enter the interactive browser just to synthesize its B-key
+       request path. */
+    demo_active = true;
+    demo_requested = false;
+    demo_advance_pending = false;
+    demo_current_name[0] = '\0';
+    if (!demo_load_next_rom(nullptr)) {
+        demo_stop();
+        need_browser = true;
+    }
     while (true) {
         if (need_browser) {
             graphics_set_mode(TEXTMODE_DEFAULT);
