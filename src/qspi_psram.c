@@ -3,6 +3,7 @@
 #if PICO_RP2350
 
 #include "pico/stdlib.h"
+#include "pico/multicore.h"
 #include "hardware/clocks.h"
 #include "hardware/sync.h"
 #include "hardware/structs/qmi.h"
@@ -116,12 +117,15 @@ bool __no_inline_not_in_flash_func(wonderswan_qspi_psram_init)(void) {
     psram_size = 0;
     gpio_set_function(cs_pin, GPIO_FUNC_XIP_CS1);
 
+    /* QMI direct mode temporarily makes XIP unsafe for the other core. */
+    multicore_lockout_start_blocking();
     const uint32_t ints = save_and_disable_interrupts();
     qmi_hw->direct_csr = 30u << QMI_DIRECT_CSR_CLKDIV_LSB | QMI_DIRECT_CSR_EN_BITS;
     while (qmi_hw->direct_csr & QMI_DIRECT_CSR_BUSY_BITS) ;
     if (!psram_direct_probe()) {
         qmi_hw->direct_csr = 0;
         restore_interrupts(ints);
+        multicore_lockout_end_blocking();
         return false;
     }
 
@@ -152,6 +156,7 @@ bool __no_inline_not_in_flash_func(wonderswan_qspi_psram_init)(void) {
     qmi_hw->direct_csr = 0;
     hw_set_bits(&xip_ctrl_hw->ctrl, XIP_CTRL_WRITABLE_M1_BITS);
     restore_interrupts(ints);
+    multicore_lockout_end_blocking();
 
     psram_size = psram_detect_size();
     psram_available = psram_size > WONDERSWAN_QSPI_AUX_SIZE;

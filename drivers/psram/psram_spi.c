@@ -14,7 +14,7 @@ static inline volatile uint8_t *qspi_aux_ptr(uint32_t addr) {
 
 static psram_spi_inst_t psram_spi;
 static uint32_t psram_init_sys_hz;
-static bool legacy_psram_available;
+static bool legacy_psram_available = false;
 static uint32_t fallback_sram_size;
 static uint32_t fallback_eeprom_size;
 
@@ -98,9 +98,8 @@ uint32_t psram_size() {
 }
 
 uint32_t init_psram() {
-    psram_init_sys_hz = clock_get_hz(clk_sys);
-    legacy_psram_available = false;
 #ifdef WONDERSWAN_LEGACY_SPI_PSRAM
+    psram_init_sys_hz = clock_get_hz(clk_sys);
     psram_spi = psram_spi_init_clkdiv(pio0, -1, 2.0, false);
     if (!_psram_size()) {
         psram_spi = psram_spi_init_clkdiv(pio0, -1, 2.0, true);
