@@ -17,7 +17,7 @@
 #define PSRAM_CS1_GPIO_RP2350B 47u
 #endif
 
-static bool psram_available;
+static bool psram_available = false;
 static size_t psram_size;
 
 static bool __no_inline_not_in_flash_func(psram_direct_probe)(void) {

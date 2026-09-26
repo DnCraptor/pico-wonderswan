@@ -1007,13 +1007,21 @@ static enum vreg_voltage selected_voltage(uint16_t mhz) {
         default:
             if (mhz > 504) return VREG_VOLTAGE_1_65;
             if (mhz >= 378) return VREG_VOLTAGE_1_60;
+#if ZERO
+            return VREG_VOLTAGE_1_60;
+#else
             return VREG_VOLTAGE_1_50;
+#endif
     }
 }
 
 #if PICO_RP2350
 static void __no_inline_not_in_flash_func(set_flash_timing_for_clock)(uint32_t sys_hz) {
+#if ZERO
+    const uint32_t max_flash_hz = 66000000u;
+#else
     const uint32_t max_flash_hz = 133000000u;
+#endif
     uint32_t divisor = (sys_hz + max_flash_hz - (max_flash_hz >> 4) - 1) / max_flash_hz;
     if (divisor == 1 && sys_hz >= 166000000u) divisor = 2;
     uint32_t rxdelay = divisor;
@@ -1084,11 +1092,17 @@ bool overclock() {
     if (!runtime_drivers_ready) {
         volatile uint32_t *qmi_m0_timing = (uint32_t *)0x400d000c;
         vreg_disable_voltage_limit();
+#if ZERO
+        vreg_set_voltage(VREG_VOLTAGE_1_60);
+#else
         vreg_set_voltage(VREG_VOLTAGE_1_50);
+#endif
         sleep_ms(33);
         *qmi_m0_timing = 0x60007204;
         const bool res = set_sys_clock_khz(target_khz, false);
+#ifndef ZERO
         *qmi_m0_timing = 0x60007303;
+#endif
         graphics_set_mode(TEXTMODE_DEFAULT);
         return res;
     }
