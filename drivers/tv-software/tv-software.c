@@ -1121,7 +1121,7 @@ static bool __time_critical_func(video_timer_callbackTV)(repeating_timer_t* rt) 
                         case GRAPHICSMODE_DEFAULT:
                             if (y < graphics_buffer.shift_y || y >= graphics_buffer.height+graphics_buffer.shift_y) {
                                 for (int i = 0; i < video_mode.img_W - d_end; i++) {
-                                    uint32_t cout32 = conv_color[li][0];
+                                    uint32_t cout32 = conv_color[li][200]; /* reserved bg (black), not game palette[0] */
                                     uint8_t* c_4 = (uint8_t*)&cout32;
                                     *output_buffer8++ = c_4[i % 4];
                                 }
@@ -1130,7 +1130,7 @@ static bool __time_critical_func(video_timer_callbackTV)(repeating_timer_t* rt) 
                                 //ширина кадра (у WonderSwan 224), а не хардкод 320.
                                 uint8_t* input_buffer8 = input_buffer + (y-graphics_buffer.shift_y) * graphics_buffer.width;
                                 // todo bgcolor
-                                uint8_t color = graphics_buffer.shift_x ? 0 : *input_buffer8++;
+                                uint8_t color = graphics_buffer.shift_x ? 200 : *input_buffer8++; /* 200 = reserved bg */
                                 uint32_t cout32 = conv_color[li][color];
                                 // uint8_t* c_4=&conv_color[0][c8&0xf];
                                 uint8_t* c_4 = (uint8_t*)&cout32;
@@ -1149,7 +1149,7 @@ static bool __time_critical_func(video_timer_callbackTV)(repeating_timer_t* rt) 
                                             color = *input_buffer8++;
                                         }
                                         else {
-                                            color = 0;
+                                            color = 200; /* reserved bg, not palette[0] */
                                         }
                                         cout32 = conv_color[li][color];
                                         next_ibuf += 0x100;
