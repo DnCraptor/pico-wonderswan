@@ -388,20 +388,27 @@ static const uint16_t demo_seconds[] = { 15, 30, 45, 60, 120, 180, 300, 600 };
 static uint64_t palette_overlay_until = 0;
 
 static void demo_update_title(void) {
-    const bool visible = demo_active && demo_current_name[0] &&
-        time_us_64() - demo_game_started_at < 10000000ull;
-    if (!visible) {
+    if (!demo_active || !demo_current_name[0]) {
         graphics_set_demo_overlay(false, nullptr);
         return;
     }
 
+    const uint64_t elapsed_us = time_us_64() - demo_game_started_at;
     char title[53];
-    const char *dot = strrchr(demo_current_name, '.');
-    size_t len = dot ? (size_t)(dot - demo_current_name) : strlen(demo_current_name);
-    if (len > sizeof(title) - 1) len = sizeof(title) - 1;
-    for (size_t i = 0; i < len; ++i)
-        title[i] = demo_current_name[i] == '_' ? ' ' : demo_current_name[i];
-    title[len] = '\0';
+    if (elapsed_us < 10000000ull) {
+        const char *dot = strrchr(demo_current_name, '.');
+        size_t len = dot ? (size_t)(dot - demo_current_name) : strlen(demo_current_name);
+        if (len > sizeof(title) - 1) len = sizeof(title) - 1;
+        for (size_t i = 0; i < len; ++i)
+            title[i] = demo_current_name[i] == '_' ? ' ' : demo_current_name[i];
+        title[len] = '\0';
+    } else {
+        const uint8_t di = demo_duration < count_of(demo_seconds) ? demo_duration : 0;
+        const uint64_t duration_us = (uint64_t)demo_seconds[di] * 1000000ull;
+        const uint64_t remaining_us = elapsed_us < duration_us ? duration_us - elapsed_us : 0;
+        const unsigned remaining_sec = (unsigned)((remaining_us + 999999ull) / 1000000ull);
+        snprintf(title, sizeof(title), "%u", remaining_sec);
+    }
     graphics_set_demo_overlay(true, title);
 }
 
@@ -2885,9 +2892,7 @@ int main() {
             }
 
             if (demo_active) {
-                if (graphics_demo_overlay_enabled &&
-                    time_us_64() - demo_game_started_at >= 10000000ull)
-                    graphics_set_demo_overlay(false, nullptr);
+                demo_update_title();
                 const uint8_t di = demo_duration < count_of(demo_seconds) ? demo_duration : 0;
                 if (time_us_64() - demo_game_started_at >= (uint64_t)demo_seconds[di] * 1000000ull) {
                     demo_advance_pending = true;
