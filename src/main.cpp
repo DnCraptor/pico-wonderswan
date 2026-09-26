@@ -435,7 +435,7 @@ bool isExecutable(const char pathname[255], const char *extensions) {
 static bool temporary_flash_reclock(uint32_t target_khz);
 static void menu(bool game_loaded);
 
-bool filebrowser_loadfile(const char pathname[256]) {
+bool filebrowser_loadfile(const char pathname[256], bool show_ui = true) {
     UINT bytes_read = 0;
 
 #ifdef HWAY
@@ -445,23 +445,29 @@ bool filebrowser_loadfile(const char pathname[256]) {
     constexpr int window_y = (TEXTMODE_ROWS - 5) / 2;
     constexpr int window_x = (TEXTMODE_COLS - 43) / 2;
 
-    draw_window("Loading ROM", window_x, window_y, 43, 5);
+    if (show_ui)
+        draw_window("Loading ROM", window_x, window_y, 43, 5);
 
     FILINFO fileinfo;
     if (FR_OK != f_stat(pathname, &fileinfo) || fileinfo.fsize == 0) {
-        draw_text("ERROR: ROM not found or empty!", window_x + 1, window_y + 2, 13, 1);
-        sleep_ms(demo_active ? 1500 : 5000);
+        if (show_ui) {
+            draw_text("ERROR: ROM not found or empty!", window_x + 1, window_y + 2, 13, 1);
+            sleep_ms(demo_active ? 1500 : 5000);
+        }
         return false;
     }
 
     const uint32_t load_size = fileinfo.fsize;
     if (((16384 - 64) << 10) < load_size) {
-        draw_text("ERROR: ROM too large! Canceled!!", window_x + 1, window_y + 2, 13, 1);
-        sleep_ms(demo_active ? 1500 : 5000);
+        if (show_ui) {
+            draw_text("ERROR: ROM too large! Canceled!!", window_x + 1, window_y + 2, 13, 1);
+            sleep_ms(demo_active ? 1500 : 5000);
+        }
         return false;
     }
 
-    draw_text("Loading...", window_x + 1, window_y + 2, 10, 1);
+    if (show_ui)
+        draw_text("Loading...", window_x + 1, window_y + 2, 10, 1);
 
     const bool psram_available = wonderswan_qspi_psram_available();
     const size_t psram_capacity = psram_available ? wonderswan_qspi_rom_capacity() : 0;
@@ -486,25 +492,31 @@ bool filebrowser_loadfile(const char pathname[256]) {
     } else {
         const uint32_t firmware_end = (uint32_t)((uintptr_t)&__flash_binary_end - XIP_BASE);
         if (firmware_end > FLASH_TARGET_OFFSET) {
-            draw_text("ERROR: Firmware overlaps ROM flash area!", window_x + 1, window_y + 2, 13, 1);
-            sleep_ms(demo_active ? 1500 : 5000);
+            if (show_ui) {
+                draw_text("ERROR: Firmware overlaps ROM flash area!", window_x + 1, window_y + 2, 13, 1);
+                sleep_ms(demo_active ? 1500 : 5000);
+            }
             return false;
         }
 
         const uint32_t flash_size = detect_flash_size_bytes();
         if (FLASH_TARGET_OFFSET >= flash_size || load_size > flash_size - FLASH_TARGET_OFFSET) {
-            draw_text(psram_available ? "ERROR: ROM too large for PSRAM/flash!"
-                                      : "ERROR: ROM too large for flash!",
-                      window_x + 1, window_y + 2, 13, 1);
-            sleep_ms(demo_active ? 1500 : 5000);
+            if (show_ui) {
+                draw_text(psram_available ? "ERROR: ROM too large for PSRAM/flash!"
+                                          : "ERROR: ROM too large for flash!",
+                          window_x + 1, window_y + 2, 13, 1);
+                sleep_ms(demo_active ? 1500 : 5000);
+            }
             return false;
         }
 
         const uint32_t original_sys_khz = clock_get_hz(clk_sys) / 1000u;
         const bool need_clock_restore = original_sys_khz > 252000u;
         if (need_clock_restore && !temporary_flash_reclock(252000u)) {
-            draw_text("ERROR: Cannot lower clock for flash!", window_x + 1, window_y + 2, 13, 1);
-            sleep_ms(demo_active ? 1500 : 5000);
+            if (show_ui) {
+                draw_text("ERROR: Cannot lower clock for flash!", window_x + 1, window_y + 2, 13, 1);
+                sleep_ms(demo_active ? 1500 : 5000);
+            }
             return false;
         }
 
@@ -550,8 +562,10 @@ bool filebrowser_loadfile(const char pathname[256]) {
     }
 
     if (!load_ok) {
-        draw_text("ERROR: ROM load failed!", window_x + 1, window_y + 2, 13, 1);
-        sleep_ms(demo_active ? 1500 : 5000);
+        if (show_ui) {
+            draw_text("ERROR: ROM load failed!", window_x + 1, window_y + 2, 13, 1);
+            sleep_ms(demo_active ? 1500 : 5000);
+        }
         return false;
     }
 
@@ -600,7 +614,7 @@ static bool demo_load_next_rom(const char *after_name) {
 
         char pathname[256];
         snprintf(pathname, sizeof(pathname), "%s\\%s", HOME_DIR, best);
-        if (filebrowser_loadfile(pathname)) {
+        if (filebrowser_loadfile(pathname, false)) {
             strncpy(demo_current_name, best, sizeof(demo_current_name) - 1);
             demo_current_name[sizeof(demo_current_name) - 1] = '\0';
             demo_game_started_at = time_us_64();
@@ -2539,7 +2553,6 @@ void __time_critical_func(render_core)() {
 }
 
 int frame;
-bool PSRAM_AVAILABLE = true;
 
 int main() {
     overclock();
@@ -2547,9 +2560,11 @@ int main() {
     /* Persistent config contains only emulator/UI settings. Clock and voltage
        are deliberately runtime-only, so loading a config can never alter the
        bootstrap clock before core1 starts. */
-    if (f_mount(&fs, "", 1) == FR_OK)
+    bool mount_passed = f_mount(&fs, "", 1) == FR_OK;
+    if (mount_passed) {
+        f_mkdir("/tmp");
         load_config();
-
+    }
 //    stdio_init_all();
 
     sem_init(&vga_start_semaphore, 0, 1);
@@ -2558,12 +2573,16 @@ int main() {
 
     /* Once input is alive, held aggregate SELECT removes the global config
        and reboots. Per-game INI files are left untouched. */
-    while (!runtime_drivers_ready)
+    while (!runtime_drivers_ready) {
+        sleep_ms(1);
         tight_loop_contents();
-    sleep_ms(200);
+    }
+    for (int i = 0; i < 200; ++i) {
+        sleep_ms(1);
+        tight_loop_contents();
+    }
     if (gamepad1_bits.select) {
-        draw_text("Reboot!", 0, 0, 12, 0);
-        if (f_mount(&fs, "", 1) == FR_OK) {
+        if (mount_passed) {
             char cfgp[128];
             config_path(cfgp, sizeof(cfgp));
             f_unlink(cfgp);
@@ -2580,12 +2599,6 @@ int main() {
     gpio_init(PICO_DEFAULT_LED_PIN);
     gpio_set_dir(PICO_DEFAULT_LED_PIN, GPIO_OUT);
 
-    for (int i = 0; i < 6; i++) {
-        sleep_ms(33);
-        gpio_put(PICO_DEFAULT_LED_PIN, true);
-        sleep_ms(33);
-        gpio_put(PICO_DEFAULT_LED_PIN, false);
-    }
 #if PICO_RP2350
     if (wonderswan_qspi_psram_init()) {
         rom = WONDERSWAN_QSPI_PSRAM_BASE;
@@ -2596,8 +2609,12 @@ int main() {
         // without memory-mapped QSPI PSRAM.
         init_psram();
     }
-    /* Ensure the temporary backing directory exists before cartridge startup. */
-    if (f_mount(&fs, "", 1) == FR_OK) f_mkdir("/tmp");
+    for (int i = 0; i < 6; i++) {
+        sleep_ms(33);
+        gpio_put(PICO_DEFAULT_LED_PIN, true);
+        sleep_ms(33);
+        gpio_put(PICO_DEFAULT_LED_PIN, false);
+    }
 
     bool need_browser = true;
     bool rom_selected_from_live_browser = false;
@@ -2818,7 +2835,8 @@ int main() {
             ws_backplane_enabled = (backplane_mode == 0) && mono_ws_rom_loaded(true);
             ws_backplane_portrait = portrait;
 #endif
-            graphics_overlay_palette_index = ws_backplane_enabled ? 15 : 0;
+graphics_overlay_palette_index = 0;
+        //    graphics_overlay_palette_index = ws_backplane_enabled ? 15 : 0;
             graphics_set_offset(portrait ? 88 : 48, portrait ? 8 : 48);
 
             // Portrait mode renders the native 224x144 frame into SCREEN1, then

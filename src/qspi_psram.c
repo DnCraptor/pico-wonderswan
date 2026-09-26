@@ -108,6 +108,7 @@ static void __no_inline_not_in_flash_func(psram_set_timing)(uint32_t sys_hz) {
 }
 
 bool __no_inline_not_in_flash_func(wonderswan_qspi_psram_init)(void) {
+    const uint32_t sys_hz = clock_get_hz(clk_sys);
     const bool rp2350a =
         (*((io_ro_32 *)(SYSINFO_BASE + SYSINFO_PACKAGE_SEL_OFFSET)) & 1u) != 0;
     const uint cs_pin = rp2350a ? PSRAM_CS1_GPIO_RP2350A : PSRAM_CS1_GPIO_RP2350B;
@@ -130,7 +131,7 @@ bool __no_inline_not_in_flash_func(wonderswan_qspi_psram_init)(void) {
     qmi_hw->direct_tx = QMI_DIRECT_TX_NOPUSH_BITS | 0x35u;
     while (qmi_hw->direct_csr & QMI_DIRECT_CSR_BUSY_BITS) ;
 
-    psram_set_timing(clock_get_hz(clk_sys));
+    psram_set_timing(sys_hz);
     qmi_hw->m[1].rfmt =
         QMI_M0_RFMT_PREFIX_WIDTH_VALUE_Q << QMI_M0_RFMT_PREFIX_WIDTH_LSB |
         QMI_M0_RFMT_ADDR_WIDTH_VALUE_Q << QMI_M0_RFMT_ADDR_WIDTH_LSB |
