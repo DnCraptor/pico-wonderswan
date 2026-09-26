@@ -1059,24 +1059,7 @@ static bool temporary_flash_reclock(uint32_t target_khz) {
 
     const uint32_t irq_state = save_and_disable_interrupts();
     if (runtime_drivers_ready) multicore_lockout_start_blocking();
-
-    bool res;
-#if PICO_RP2350
-    /* Keep QMI0 within its flash-frequency limit throughout the transition.
-       When slowing down, the old high-clock timing is already safe, so change
-       clk_sys first.  When speeding up, install the target timing before the
-       faster clock becomes active. */
-    if (target_khz < current_khz) {
-        res = set_target_sys_clock(target_khz);
-        if (res) set_flash_timing_for_clock(target_khz * 1000u);
-    } else {
-        set_flash_timing_for_clock(target_khz * 1000u);
-        res = set_target_sys_clock(target_khz);
-        if (!res) set_flash_timing_for_clock(current_khz * 1000u);
-    }
-#else
-    res = set_target_sys_clock(target_khz);
-#endif
+    const bool res = set_target_sys_clock(target_khz);
 
     if (runtime_drivers_ready) multicore_lockout_end_blocking();
     restore_interrupts(irq_state);
@@ -2666,9 +2649,9 @@ int main() {
 #endif
 
 #if PICO_RP2350
- //   if (wonderswan_qspi_psram_init()) {
-   //     rom = WONDERSWAN_QSPI_PSRAM_BASE;
-  //  } else
+    if (wonderswan_qspi_psram_init()) {
+        rom = WONDERSWAN_QSPI_PSRAM_BASE;
+    } else
 #endif
     {
         // Keep the legacy SPI PSRAM path for cartridge SRAM/EEPROM on boards

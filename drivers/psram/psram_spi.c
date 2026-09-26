@@ -100,9 +100,6 @@ uint32_t psram_size() {
 uint32_t init_psram() {
     psram_init_sys_hz = clock_get_hz(clk_sys);
     legacy_psram_available = false;
-#if PICO_RP2350
-    if (wonderswan_qspi_psram_available()) return 2u << 20;
-#endif
 #ifdef WONDERSWAN_LEGACY_SPI_PSRAM
     psram_spi = psram_spi_init_clkdiv(pio0, -1, 2.0, false);
     if (!_psram_size()) {
