@@ -7,6 +7,8 @@
 #if PICO_RP2350
 extern bool wonderswan_qspi_psram_available(void);
 extern uintptr_t wonderswan_qspi_aux_base(void);
+extern size_t wonderswan_qspi_psram_size(void);
+extern bool wonderswan_qspi_set_aux_region(size_t offset, size_t size);
 static inline volatile uint8_t *qspi_aux_ptr(uint32_t addr) {
     return (volatile uint8_t *)(wonderswan_qspi_aux_base() + addr);
 }
@@ -15,6 +17,10 @@ static inline volatile uint8_t *qspi_aux_ptr(uint32_t addr) {
 static psram_spi_inst_t psram_spi;
 static uint32_t psram_init_sys_hz;
 static bool legacy_psram_available = false;
+static uint32_t legacy_psram_size;
+
+typedef enum { CART_STORAGE_FILE, CART_STORAGE_QSPI, CART_STORAGE_LEGACY } cart_storage_backend_t;
+static cart_storage_backend_t cart_storage_backend = CART_STORAGE_FILE;
 static uint32_t fallback_sram_size;
 static uint32_t fallback_eeprom_size;
 
@@ -105,6 +111,7 @@ uint32_t init_psram() {
         psram_spi = psram_spi_init_clkdiv(pio0, -1, 2.0, true);
     }
     const uint32_t size = psram_size();
+    legacy_psram_size = size;
     legacy_psram_available = size != 0;
     return size;
 #else
@@ -117,16 +124,16 @@ uint32_t init_psram() {
 
 static uint8_t physical_psram_read8(uint32_t addr) {
 #if PICO_RP2350
-    if (wonderswan_qspi_psram_available()) return *qspi_aux_ptr(addr);
+    if (cart_storage_backend == CART_STORAGE_QSPI) return *qspi_aux_ptr(addr);
 #endif
-    return legacy_psram_available ? psram_read8(&psram_spi, addr) : 0xff;
+    return cart_storage_backend == CART_STORAGE_LEGACY ? psram_read8(&psram_spi, addr) : 0xff;
 }
 
 static void physical_psram_write8(uint32_t addr, uint8_t value) {
 #if PICO_RP2350
-    if (wonderswan_qspi_psram_available()) { *qspi_aux_ptr(addr) = value; return; }
+    if (cart_storage_backend == CART_STORAGE_QSPI) { *qspi_aux_ptr(addr) = value; return; }
 #endif
-    if (legacy_psram_available) psram_write8(&psram_spi, addr, value);
+    if (cart_storage_backend == CART_STORAGE_LEGACY) psram_write8(&psram_spi, addr, value);
 }
 
 static uint32_t physical_psram_read32(uint32_t addr) {
@@ -143,26 +150,48 @@ static void physical_psram_write32(uint32_t addr, uint32_t value) {
 
 bool psram_configure_cart_storage(uint32_t sram_size, uint32_t eeprom_size,
                                   uint32_t rom_size, uint16_t rom_checksum) {
+    if (nvram_file_open) {
+        nvram_cache_flush();
+        f_close(&nvram_file);
+        nvram_file_open = false;
+    }
+
+    const uint32_t ram_bytes = sram_size ? sram_size : 0x10000u;
+    uint32_t storage_span = 1u << 20; /* includes CART_IDENTITY_ADDR */
+    if (eeprom_size > storage_span) storage_span = eeprom_size;
+    if (ram_bytes > UINT32_MAX - (1u << 20)) return false;
+    const uint32_t sram_end = (1u << 20) + ram_bytes;
+    if (sram_end > storage_span) storage_span = sram_end;
+
+    cart_storage_backend = CART_STORAGE_FILE;
 #if PICO_RP2350
-    const bool physical_psram = wonderswan_qspi_psram_available() || legacy_psram_available;
-#else
-    const bool physical_psram = legacy_psram_available;
+    if (wonderswan_qspi_psram_available()) {
+        const size_t qspi_size = wonderswan_qspi_psram_size();
+        const size_t aux_offset = ((size_t)rom_size + 0xffffu) & ~(size_t)0xffffu;
+        if (aux_offset <= qspi_size && storage_span <= qspi_size - aux_offset &&
+            wonderswan_qspi_set_aux_region(aux_offset, storage_span)) {
+            cart_storage_backend = CART_STORAGE_QSPI;
+        }
+    }
 #endif
-    if (physical_psram) {
+    /* M1 can have a separate PIO/SPI PSRAM. Prefer it whenever the QSPI
+       cartridge occupies too much of CS1 to leave a non-overlapping save area. */
+    if (cart_storage_backend == CART_STORAGE_FILE && legacy_psram_available &&
+        storage_span <= legacy_psram_size) {
+        cart_storage_backend = CART_STORAGE_LEGACY;
+    }
+
+    if (cart_storage_backend != CART_STORAGE_FILE) {
         const uint32_t old_magic = physical_psram_read32(CART_IDENTITY_ADDR);
         const uint32_t old_size = physical_psram_read32(CART_IDENTITY_ADDR + 4u);
         const uint32_t old_checksum = physical_psram_read32(CART_IDENTITY_ADDR + 8u);
         const bool same_cart = false; /* old_magic == CART_IDENTITY_MAGIC && /// GunPey bug
                                old_size == rom_size && old_checksum == rom_checksum; */
+        (void)old_magic; (void)old_size; (void)old_checksum;
 
         if (!same_cart) {
-            /* Physical PSRAM survives a watchdog reset.  Its cartridge area
-               must therefore be treated like inserted-cartridge state, not as
-               global emulator state shared by every ROM.  A different ROM gets
-               erased EEPROM/SRAM; restarting the same ROM keeps its contents. */
             for (uint32_t i = 0; i < eeprom_size; ++i)
                 physical_psram_write8(i, 0xff);
-            const uint32_t ram_bytes = sram_size ? sram_size : 0x10000u;
             for (uint32_t i = 0; i < ram_bytes; ++i)
                 physical_psram_write8((1u << 20) + i, 0);
 
@@ -173,25 +202,20 @@ bool psram_configure_cart_storage(uint32_t sram_size, uint32_t eeprom_size,
         return true;
     }
 
-    if (nvram_file_open) {
-        nvram_cache_flush();
-        f_close(&nvram_file);
-        nvram_file_open = false;
-    }
-    fallback_sram_size = sram_size;
+    /* File backing is the last resort. Preserve the synthetic 64 KiB bank-1
+       work RAM even for cartridges that declare no SRAM. */
+    fallback_sram_size = ram_bytes;
     fallback_eeprom_size = eeprom_size;
     nvram_cache_loaded = false;
     nvram_cache_dirty = false;
 
-    const uint32_t total = sram_size + eeprom_size;
-    if (!total) return true;
+    const uint32_t total = fallback_sram_size + fallback_eeprom_size;
     const FRESULT mkdir_result = f_mkdir("/tmp");
     if (mkdir_result != FR_OK && mkdir_result != FR_EXIST) return false;
     if (f_open(&nvram_file, NVRAM_BACKING_FILE, FA_READ | FA_WRITE | FA_CREATE_ALWAYS) != FR_OK)
         return false;
     nvram_file_open = true;
 
-    /* Pre-size the temporary backing file without consuming cartridge-sized RAM. */
     if (f_lseek(&nvram_file, total - 1u) != FR_OK) return false;
     const uint8_t zero = 0;
     UINT written = 0;
@@ -220,9 +244,9 @@ void psram_cleanup() {
 
 void write8psram(uint32_t addr32, uint8_t v) {
 #if PICO_RP2350
-    if (wonderswan_qspi_psram_available()) { *qspi_aux_ptr(addr32) = v; return; }
+    if (cart_storage_backend == CART_STORAGE_QSPI) { *qspi_aux_ptr(addr32) = v; return; }
 #endif
-    if (legacy_psram_available) { psram_write8(&psram_spi, addr32, v); return; }
+    if (cart_storage_backend == CART_STORAGE_LEGACY) { psram_write8(&psram_spi, addr32, v); return; }
     uint32_t offset;
     if (nvram_file_open && nvram_translate(addr32, &offset) && nvram_cache_load(offset)) {
         nvram_cache[offset - nvram_cache_base] = v;
@@ -250,9 +274,9 @@ void readpsram(uint8_t* b, uint32_t addr32, size_t sz) {
 
 uint8_t read8psram(uint32_t addr32) {
 #if PICO_RP2350
-    if (wonderswan_qspi_psram_available()) return *qspi_aux_ptr(addr32);
+    if (cart_storage_backend == CART_STORAGE_QSPI) return *qspi_aux_ptr(addr32);
 #endif
-    if (legacy_psram_available) return psram_read8(&psram_spi, addr32);
+    if (cart_storage_backend == CART_STORAGE_LEGACY) return psram_read8(&psram_spi, addr32);
     uint32_t offset;
     if (nvram_file_open && nvram_translate(addr32, &offset) && nvram_cache_load(offset))
         return nvram_cache[offset - nvram_cache_base];

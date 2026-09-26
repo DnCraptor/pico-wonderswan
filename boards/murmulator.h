@@ -1,9 +1,4 @@
 #pragma once
-#if PICO_RP2350
-#include "boards/pico2.h"
-#else
-#include "boards/pico.h"
-#endif
 
 #if PICO_RP2350
 #define PSRAM_CS1_GPIO_RP2350A 19
@@ -36,3 +31,4 @@
 #define PSRAM_PIN_MOSI 20
 #define PSRAM_PIN_MISO 21
 #define WONDERSWAN_LEGACY_SPI_PSRAM 1
+#define PICO_DEFAULT_LED_PIN 25

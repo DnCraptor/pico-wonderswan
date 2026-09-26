@@ -2676,15 +2676,13 @@ int main() {
 #endif
 
 #if PICO_RP2350
-    if (wonderswan_qspi_psram_init()) {
+    if (wonderswan_qspi_psram_init())
         rom = WONDERSWAN_QSPI_PSRAM_BASE;
-    } else
 #endif
-    {
-        // Keep the legacy SPI PSRAM path for cartridge SRAM/EEPROM on boards
-        // without memory-mapped QSPI PSRAM.
-        init_psram();
-    }
+    /* M1 may also have a separate PIO/SPI PSRAM.  Initialise it even when
+       QSPI PSRAM is present so cartridge save memory can spill there when an
+       8 MiB ROM consumes the whole QSPI device.  On other boards this is a no-op. */
+    init_psram();
 #ifdef PICO_DEFAULT_LED_PIN
     for (int i = 0; i < 6; i++) {
         sleep_ms(33);
@@ -2693,12 +2691,12 @@ int main() {
         gpio_put(PICO_DEFAULT_LED_PIN, false);
     }
 #endif
-    bool need_browser = false;
     bool rom_selected_from_live_browser = false;
-
+#if START_FROM_DEMO
     /* Start directly in Demo mode. Demo owns ROM discovery/loading itself,
        so do not enter the interactive browser just to synthesize its B-key
        request path. */
+    bool need_browser = false;
     demo_active = true;
     demo_requested = false;
     demo_advance_pending = false;
@@ -2707,6 +2705,9 @@ int main() {
         demo_stop();
         need_browser = true;
     }
+#else
+    bool need_browser = true;
+#endif
     while (true) {
         if (need_browser) {
             graphics_set_mode(TEXTMODE_DEFAULT);

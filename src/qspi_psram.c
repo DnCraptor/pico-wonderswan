@@ -19,6 +19,8 @@
 
 static bool psram_available = false;
 static size_t psram_size;
+static size_t psram_size;
+static size_t psram_aux_offset;
 
 static bool __no_inline_not_in_flash_func(psram_direct_probe)(void) {
     for (int attempt = 0; attempt < 3; ++attempt) {
@@ -159,7 +161,8 @@ bool __no_inline_not_in_flash_func(wonderswan_qspi_psram_init)(void) {
     multicore_lockout_end_blocking();
 
     psram_size = psram_detect_size();
-    psram_available = psram_size > WONDERSWAN_QSPI_AUX_SIZE;
+    psram_available = psram_size != 0;
+    psram_aux_offset = psram_size;
     return psram_available;
 }
 
@@ -170,10 +173,16 @@ void __no_inline_not_in_flash_func(wonderswan_qspi_psram_reclock)(uint32_t sys_h
 bool wonderswan_qspi_psram_available(void) { return psram_available; }
 size_t wonderswan_qspi_psram_size(void) { return psram_size; }
 size_t wonderswan_qspi_rom_capacity(void) {
-    return psram_available ? psram_size - WONDERSWAN_QSPI_AUX_SIZE : 0;
+    return psram_available ? psram_size : 0;
 }
 uintptr_t wonderswan_qspi_aux_base(void) {
-    return psram_available ? WONDERSWAN_QSPI_PSRAM_BASE + wonderswan_qspi_rom_capacity() : 0;
+    return psram_available ? WONDERSWAN_QSPI_PSRAM_UNCACHED_BASE + psram_aux_offset : 0;
+}
+
+bool wonderswan_qspi_set_aux_region(size_t offset, size_t size) {
+    if (!psram_available || offset > psram_size || size > psram_size - offset) return false;
+    psram_aux_offset = offset;
+    return true;
 }
 
 #else
@@ -183,4 +192,5 @@ bool wonderswan_qspi_psram_available(void) { return false; }
 size_t wonderswan_qspi_psram_size(void) { return 0; }
 size_t wonderswan_qspi_rom_capacity(void) { return 0; }
 uintptr_t wonderswan_qspi_aux_base(void) { return 0; }
+bool wonderswan_qspi_set_aux_region(size_t offset, size_t size) { (void)offset; (void)size; return false; }
 #endif
