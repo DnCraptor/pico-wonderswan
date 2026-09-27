@@ -2797,7 +2797,7 @@ int main() {
             shuffle_palettes(false);
         ws_reset();
         apply_current_palette_to_video();
-#ifdef HDMI
+#if defined(HDMI) || defined(SOFTTV)
         if (mono_ws_rom_loaded(true)) {
             const uint32_t *backplane_palette = portrait_enabled()
                 ? ws_backplane_hdmi_portrait_palette

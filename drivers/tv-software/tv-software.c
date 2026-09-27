@@ -2,6 +2,7 @@
 //программный композит
 #include <stdio.h>
 #include "graphics.h"
+#include "wonderswan_backplane.h"
 #include "hardware/clocks.h"
 #include <stdalign.h>
 
@@ -1118,46 +1119,125 @@ static bool __time_critical_func(video_timer_callbackTV)(repeating_timer_t* rt) 
                             }
                         }
                         break;
-                        case GRAPHICSMODE_DEFAULT:
-                            if (y < graphics_buffer.shift_y || y >= graphics_buffer.height+graphics_buffer.shift_y) {
-                                for (int i = 0; i < video_mode.img_W - d_end; i++) {
-                                    uint32_t cout32 = conv_color[li][200]; /* reserved bg (black), not game palette[0] */
+                        case GRAPHICSMODE_DEFAULT: {
+                            const bool fps_row =
+                                graphics_fps_overlay_enabled &&
+                                y >= graphics_buffer.shift_y + 2 &&
+                                y < graphics_buffer.shift_y + 10 &&
+                                graphics_buffer.shift_x >= 48;
+                            const bool demo_row =
+                                graphics_demo_overlay_enabled && y >= 230 && y < 238;
+
+                            /* Preserve the original SOFTTV hot path byte-for-byte
+                               whenever this scanline needs no compositor work. */
+                            if (!ws_backplane_enabled && !fps_row && !demo_row) {
+                                if (y < graphics_buffer.shift_y ||
+                                    y >= graphics_buffer.height + graphics_buffer.shift_y) {
+                                    for (int i = 0; i < video_mode.img_W - d_end; i++) {
+                                        uint32_t cout32 = conv_color[li][200];
+                                        uint8_t* c_4 = (uint8_t*)&cout32;
+                                        *output_buffer8++ = c_4[i % 4];
+                                    }
+                                } else {
+                                    uint8_t* input_buffer8 = input_buffer +
+                                        (y - graphics_buffer.shift_y) * graphics_buffer.width;
+                                    uint8_t color = graphics_buffer.shift_x ? 200 : *input_buffer8++;
+                                    uint32_t cout32 = conv_color[li][color];
                                     uint8_t* c_4 = (uint8_t*)&cout32;
-                                    *output_buffer8++ = c_4[i % 4];
+                                    output_buffer8 += buffer_shift;
+                                    int x = 0;
+                                    for (int i = 0; i < video_mode.img_W - d_end; i++) {
+                                        *output_buffer8++ = c_4[i % 4];
+                                        next_ibuf -= di;
+                                        if (next_ibuf <= 0) {
+                                            x++;
+                                            if (x > graphics_buffer.shift_x &&
+                                                x < graphics_buffer.shift_x + graphics_buffer.width) {
+                                                color = *input_buffer8++;
+                                            } else {
+                                                color = 200;
+                                            }
+                                            cout32 = conv_color[li][color];
+                                            next_ibuf += 0x100;
+                                        }
+                                    }
                                 }
+                                break;
+                            }
+
+                            /* Compose once in palette-index space, then feed the
+                               original SOFTTV scaler. Keep backplane/game/OSD
+                               decisions out of the composite-sample loop. */
+                            uint8_t compose_line[320];
+                            if (ws_backplane_enabled) {
+                                const uint8_t *bp_image = ws_backplane_portrait
+                                    ? ws_backplane_hdmi_portrait : ws_backplane;
+                                memcpy(compose_line, bp_image + (unsigned)y * 320u, 320u);
                             } else {
-                                //для 8-битного буфера: шаг строки = реальная
-                                //ширина кадра (у WonderSwan 224), а не хардкод 320.
-                                uint8_t* input_buffer8 = input_buffer + (y-graphics_buffer.shift_y) * graphics_buffer.width;
-                                // todo bgcolor
-                                uint8_t color = graphics_buffer.shift_x ? 200 : *input_buffer8++; /* 200 = reserved bg */
-                                uint32_t cout32 = conv_color[li][color];
-                                // uint8_t* c_4=&conv_color[0][c8&0xf];
-                                uint8_t* c_4 = (uint8_t*)&cout32;
-                                output_buffer8 += buffer_shift;
+                                memset(compose_line, 200, sizeof(compose_line));
+                            }
 
-
-                                int x = 0;
-
-                                for (int i = 0; i < video_mode.img_W - d_end; i++) {
-                                    *output_buffer8++ = c_4[i % 4];
-                                    next_ibuf -= di;
-                                    if (next_ibuf <= 0) {
-                                        x++;
-                                        if (x > graphics_buffer.shift_x && x < graphics_buffer.shift_x + graphics_buffer.
-                                                width) {
-                                            color = *input_buffer8++;
-                                        }
-                                        else {
-                                            color = 200; /* reserved bg, not palette[0] */
-                                        }
-                                        cout32 = conv_color[li][color];
-                                        next_ibuf += 0x100;
+                            if (y >= graphics_buffer.shift_y &&
+                                y < graphics_buffer.shift_y + (int)graphics_buffer.height) {
+                                const int dst_x = graphics_buffer.shift_x + 1;
+                                if (dst_x < 320) {
+                                    int copy_width = (int)graphics_buffer.width;
+                                    if (copy_width > 320 - dst_x)
+                                        copy_width = 320 - dst_x;
+                                    if (copy_width > 0) {
+                                        const uint8_t *src = input_buffer +
+                                            (y - graphics_buffer.shift_y) * graphics_buffer.width;
+                                        memcpy(compose_line + dst_x, src, (size_t)copy_width);
                                     }
                                 }
                             }
 
+                            if (fps_row) {
+                                uint8_t *dst = compose_line + 2;
+                                const unsigned glyph_row =
+                                    (unsigned)(y - graphics_buffer.shift_y - 2);
+                                for (const char *p = graphics_fps_overlay_text; *p; ++p) {
+                                    uint8_t bits = font_6x8[(uint8_t)*p * 8u + glyph_row];
+                                    for (unsigned bit = 0; bit < 6; ++bit) {
+                                        *dst++ = (bits & 1u) ? 0 : 15;
+                                        bits >>= 1;
+                                    }
+                                }
+                            }
+
+                            if (demo_row) {
+                                size_t len = 0;
+                                while (graphics_demo_overlay_text[len]) ++len;
+                                const int text_x = (320 - (int)len * 6) / 2;
+                                if (text_x >= 0) {
+                                    uint8_t *dst = compose_line + text_x;
+                                    const unsigned glyph_row = (unsigned)(y - 230);
+                                    for (const char *p = graphics_demo_overlay_text; *p; ++p) {
+                                        uint8_t bits = font_6x8[(uint8_t)*p * 8u + glyph_row];
+                                        for (unsigned bit = 0; bit < 6; ++bit) {
+                                            *dst++ = (bits & 1u) ? 0 : 15;
+                                            bits >>= 1;
+                                        }
+                                    }
+                                }
+                            }
+
+                            output_buffer8 += buffer_shift;
+                            int x = 0;
+                            uint32_t cout32 = conv_color[li][compose_line[0]];
+                            uint8_t *c_4 = (uint8_t *)&cout32;
+                            for (int i = 0; i < video_mode.img_W - d_end; ++i) {
+                                *output_buffer8++ = c_4[i & 3];
+                                next_ibuf -= di;
+                                if (next_ibuf <= 0) {
+                                    if (x < 319) ++x;
+                                    cout32 = conv_color[li][compose_line[x]];
+                                    c_4 = (uint8_t *)&cout32;
+                                    next_ibuf += 0x100;
+                                }
+                            }
                             break;
+                        }
                     }
             }
         }
