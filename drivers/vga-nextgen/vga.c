@@ -39,42 +39,42 @@ static int shift_picture = 0;
 
 static int visible_line_size = 320;
 
-/* Backplane pixels are already spatially dithered at the physical 640-pixel
- * VGA width. Keep this tiny lookup in RAM: one logical output word is two
- * independently quantized RGB222 pixels. */
+/* Backplane images are preconverted offline from the HDMI index maps and
+ * RGB888 palettes. Keep the RGB222 pair lookup in RAM so the scanout hot
+ * path remains one flash byte load, one RAM lookup and one uint16_t store. */
 static uint16_t __scratch_y("vga_bp_lut") ws_backplane_vga_pairs_landscape[256] = {
-    0xc0c0, 0xffff, 0xfeff, 0xfffe, 0xe5e9, 0xd5d5, 0xe9e9, 0xfaff,
-    0xe9e5, 0xfbfe, 0xfffa, 0xfefb, 0xfefa, 0xfafe, 0xeaea, 0xfefe,
-    0xe9ea, 0xeae9, 0xc1d5, 0xd6d5, 0xd6d6, 0xd5c1, 0xd5d6, 0xffea,
-    0xfeea, 0xeafe, 0xeaff, 0xc1c1, 0xc5d5, 0xd1c5, 0xd5c5, 0xc1c0,
-    0xc0c1, 0xc5d1, 0xeefa, 0xfbee, 0xfaee, 0xeefb, 0xc1c5, 0xc5c1,
-    0xfaef, 0xebfe, 0xeae5, 0xfeeb, 0xeffa, 0xc0d0, 0xeffe, 0xe5ea,
-    0xc0d5, 0xeeff, 0xd1d5, 0xd0c0, 0xeafa, 0xfaea, 0xfbff, 0xffee,
-    0xe9d5, 0xe6e9, 0xd5d1, 0xe9e6, 0xfeef, 0xd5c0, 0xd5e9, 0xe5d5,
-    0xffef, 0xc0c5, 0xefff, 0xd6da, 0xdad6, 0xfffb, 0xd5e5, 0xc5d6,
-    0xd9e5, 0xebeb, 0xead5, 0xc5d0, 0xe5d9, 0xc0d1, 0xc1c4, 0xc4d1,
-    0xc5c0, 0xc4c1, 0xd6c5, 0xd5ea, 0xd1c4, 0xd4c1, 0xd0c1, 0xd0c5,
-    0xc1d4, 0xfeee, 0xc1d0, 0xeefe, 0xc6d5, 0xefef, 0xfae9, 0xd1c0,
-    0xeaeb, 0xc0c4, 0xd1c1, 0xd5c6, 0xc4c0, 0xd6ea, 0xc0d4, 0xead6,
-    0xd4c0, 0xebea, 0xd4d5, 0xebef, 0xe6ea, 0xc1d1, 0xc6d6, 0xc4d0,
-    0xd0c4, 0xdaea, 0xd6c6, 0xc5c5, 0xe9fa, 0xd0d5, 0xefeb, 0xd5d0,
-    0xeada, 0xe5e5, 0xeae6, 0xd5d4, 0xd6c1, 0xd5e6, 0xeaf9, 0xe6d5,
-    0xdad5, 0xe6da, 0xd9e9, 0xc1d6, 0xdae6, 0xdaeb, 0xf9ea, 0xffeb,
-    0xebdb, 0xfafa, 0xebff, 0xdada, 0xd1d4, 0xd5c4, 0xd5da, 0xe5d6,
-    0xeafb, 0xe9d9, 0xc4d5, 0xebda, 0xf4f4, 0xe9f9, 0xd2c5, 0xdae5,
-    0xc6c1, 0xd4d1, 0xc2d5, 0xe9d6, 0xc2c1, 0xe6d9, 0xefea, 0xd6e5,
-    0xeadb, 0xd6e6, 0xd4c5, 0xc2c5, 0xf4e4, 0xdbeb, 0xeaee, 0xd5c2,
-    0xfbea, 0xd4d0, 0xc1c6, 0xc6d1, 0xfbef, 0xc1c2, 0xc5d4, 0xdbea,
-    0xd9e6, 0xf9e9, 0xf5f4, 0xc5c2, 0xe4f4, 0xd6d9, 0xd1c6, 0xe5da,
-    0xd5eb, 0xe5d4, 0xc5c6, 0xe6d6, 0xd6eb, 0xd6e9, 0xeffb, 0xd4e5,
-    0xd0d0, 0xe9d0, 0xc5c4, 0xeaef, 0xfee9, 0xebfa, 0xc6da, 0xd5e4,
-    0xc5d2, 0xd6d1, 0xfafb, 0xd9ea, 0xf4f5, 0xffd5, 0xd5d9, 0xd0d4,
-    0xfaeb, 0xdac6, 0xd1ea, 0xe9d4, 0xd1d6, 0xd6db, 0xfbfa, 0xf8f4,
-    0xebd6, 0xe6e5, 0xe5e6, 0xd9d6, 0xead9, 0xc4c5, 0xf9f4, 0xdbda,
-    0xeeeb, 0xc2c6, 0xd5ff, 0xe4d5, 0xe4e5, 0xd7da, 0xead7, 0xdae9,
-    0xeeea, 0xc6c6, 0xe9fe, 0xcad6, 0xd6ff, 0xebd5, 0xe5e4, 0xe9e4,
-    0xead4, 0xe4f5, 0xdadb, 0xdbdb, 0xe6ff, 0xc0e5, 0xffe6, 0xd0d1,
-    0xffe5, 0xf5e4, 0xf4f8, 0xe6db, 0xe7da, 0xfbeb, 0xd9d5, 0xc6c5,
+    0xeaff, 0xeafe, 0xeafa, 0xeaef, 0xeaee, 0xeaea, 0xeae9, 0xead9,
+    0xeada, 0xead5, 0xdad5, 0xe5e5, 0xd5d5, 0xd6d5, 0xcad5, 0xc6d5,
+    0xc5d5, 0xc1d5, 0xc6d6, 0xc2d5, 0xc2c5, 0xc1c5, 0xc0d5, 0xc0c5,
+    0xc0c1, 0xc1c1, 0xc2c1, 0xffea, 0xfeea, 0xfaea, 0xefea, 0xeeea,
+    0xe9ea, 0xd9ea, 0xdaea, 0xd5ea, 0xd5da, 0xd5d6, 0xd5ca, 0xd5c6,
+    0xd5c5, 0xd5c1, 0xd6c6, 0xd5c2, 0xc5c2, 0xc5c1, 0xd5c0, 0xc5c0,
+    0xc1c0, 0xc1c2, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0,
+    0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0,
+    0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0,
+    0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0,
+    0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0,
+    0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0,
+    0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0,
+    0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0,
+    0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0,
+    0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0,
+    0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0,
+    0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0,
+    0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0,
+    0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0,
+    0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0,
+    0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0,
+    0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0,
+    0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0,
+    0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0,
+    0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0,
+    0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0,
+    0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0,
+    0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0,
+    0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0,
+    0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0,
+    0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0, 0xc0c0,
 };
 
 
@@ -115,16 +115,29 @@ void __time_critical_func() dma_handler_VGA() {
     static uint32_t frame_number = 0;
     static uint32_t screen_line = 0;
     static volatile uint8_t* input_buffer = NULL;
+    static uint32_t **graphics_pending_output_buffer = NULL;
     screen_line++;
 
     if (screen_line == N_lines_total) {
         screen_line = 0;
+        if (graphics_mode != GRAPHICSMODE_DEFAULT) {
+            frame_number++;
+            input_buffer = graphics_buffer;
+            displayed_graphics_buffer = input_buffer;
+        }
+    }
+
+    /* In graphics mode line 0 must already be complete before its DMA starts.
+     * Prepare it during the last blanking scanline and publish it immediately. */
+    const bool graphics_preframe =
+        graphics_mode == GRAPHICSMODE_DEFAULT && screen_line == N_lines_total - 1;
+    if (graphics_preframe) {
         frame_number++;
         input_buffer = graphics_buffer;
         displayed_graphics_buffer = input_buffer;
     }
 
-    if (screen_line >= N_lines_visible) {
+    if (screen_line >= N_lines_visible && !graphics_preframe) {
         //заполнение цветом фона
         if (screen_line == N_lines_visible | screen_line == N_lines_visible + 3) {
             uint32_t* output_buffer_32bit = lines_pattern[2 + (screen_line & 1)];
@@ -154,8 +167,23 @@ void __time_critical_func() dma_handler_VGA() {
     uint32_t* * output_buffer = &lines_pattern[2 + (screen_line & 1)];
     switch (graphics_mode) {
         case GRAPHICSMODE_DEFAULT:
-            line_number = (int)(screen_line >> 1);
-            if (screen_line & 1u) return;
+            if (graphics_preframe) {
+                line_number = 0;
+            } else {
+                if (screen_line & 1u) {
+                    /* The second physical scanline still reads the current
+                     * buffer. Only now publish the line prepared while the
+                     * first physical scanline was being transmitted. */
+                    if (graphics_pending_output_buffer)
+                        dma_channel_set_read_addr(dma_chan_ctrl, graphics_pending_output_buffer, false);
+                    return;
+                }
+                /* DMA is transmitting logical N. Render N+1 into the other
+                 * line buffer; do not publish it until the odd scanline IRQ. */
+                line_number = (int)(screen_line >> 1) + 1;
+                if (line_number >= (N_lines_visible >> 1)) return;
+            }
+            output_buffer = &lines_pattern[2 + (line_number & 1)];
             y = line_number - graphics_buffer_shift_y;
             break;
 
@@ -240,18 +268,86 @@ void __time_critical_func() dma_handler_VGA() {
             }
         }
     }
-
-    if (y < 0) {
-        if (ws_backplane_enabled) {
-            dma_channel_set_read_addr(dma_chan_ctrl, output_buffer, false);
-            return;
+    if (graphics_mode == GRAPHICSMODE_DEFAULT && graphics_fps_overlay_enabled) {
+        int y = line_number;
+        /* FPS lives in the right border, never in the WS image. */
+        if (y >= 3 && y < 14) {
+            uint16_t *dst = (uint16_t *)(*output_buffer) + (shift_picture >> 1) + 294;
+            /* Each uint16_t carries two VGA pixels. Duplicate the 8-bit sample
+            * so HSYNC/VSYNC bits 7:6 remain valid in both pixels. */
+            const uint16_t overlay_color = (uint16_t)(txt_palette[15] & 0xffu) * 0x0101u;
+            const uint16_t overlay_bg_color = (uint16_t)(txt_palette[0] & 0xffu) * 0x0101u;
+            if (y == 3) {  // blank line before glyph
+                for (const char *p = graphics_fps_overlay_text; *p; ++p) {
+                    for (unsigned bit = 0; bit < 6; ++bit) {
+                        dst[bit] = overlay_bg_color;
+                    }
+                    dst += 6;
+                }
+            } else if (y >= 12) {  // black line after glyph
+                for (const char *p = graphics_fps_overlay_text; *p; ++p) {
+                    for (unsigned bit = 0; bit < 6; ++bit) {
+                        dst[bit] = 0xC0C0; // black
+                    }
+                    dst += 6;
+                }
+            } else {
+                const unsigned glyph_row = (unsigned)y - 4;
+                for (const char *p = graphics_fps_overlay_text; *p; ++p) {
+                    uint8_t bits = font_6x8[(uint8_t)*p * 8u + glyph_row];
+                    for (unsigned bit = 0; bit < 6; ++bit) {
+                        dst[bit] = (bits & 1u) ? overlay_color : overlay_bg_color;
+                        bits >>= 1;
+                    }
+                    dst += 6;
+                }
+            }
         }
-        dma_channel_set_read_addr(dma_chan_ctrl, &lines_pattern[0], false); // TODO: ensue it is required
+    }
+    /* Demo title lives in the bottom border, outside the WS framebuffer.
+     * Draw it before the framebuffer bounds checks so it is also reachable
+     * when the backplane is disabled. */
+    const int demo_start_y = N_lines_visible / 2 - 8;
+    if (graphics_mode == GRAPHICSMODE_DEFAULT && graphics_demo_overlay_enabled &&
+        line_number >= demo_start_y && line_number <= demo_start_y + 8) {
+        const size_t len = graphics_demo_overlay_text_len;
+        const int text_x = ((int)visible_line_size - (int)len * 6) / 2;
+        if (text_x >= 0) {
+            uint16_t *dst = (uint16_t *)(*output_buffer) + shift_picture / 2 + text_x;
+            if (line_number == demo_start_y + 8) {
+                /* Without a backplane this scanline buffer would otherwise keep
+                 * the last glyph row throughout the rest of the bottom border. */
+                if (!ws_backplane_enabled) {
+                    for (size_t i = 0; i < len * 6; ++i)
+                        dst[i] = 0xC0C0;
+                }
+            } else {
+                const uint16_t overlay_color = (uint16_t)(txt_palette[15] & 0xffu) * 0x0101u;
+                const uint16_t overlay_bg_color = (uint16_t)(txt_palette[0] & 0xffu) * 0x0101u;
+                const unsigned glyph_row = (unsigned)(line_number - demo_start_y);
+                for (const char *q = graphics_demo_overlay_text; *q; ++q) {
+                    uint8_t bits = font_6x8[(uint8_t)*q * 8u + glyph_row];
+                    for (unsigned bit = 0; bit < 6; ++bit) {
+                        dst[bit] = (bits & 1u) ? overlay_color : overlay_bg_color;
+                        bits >>= 1;
+                    }
+                    dst += 6;
+                }
+            }
+        }
+    }
+    if (y < 0) {
+        graphics_pending_output_buffer =
+            (ws_backplane_enabled || graphics_fps_overlay_enabled) ? output_buffer : &lines_pattern[0];
+        if (graphics_preframe)
+            dma_channel_set_read_addr(dma_chan_ctrl, graphics_pending_output_buffer, false);
         return;
     }
     if (y >= graphics_buffer_height) {
         if (ws_backplane_enabled) {
-            dma_channel_set_read_addr(dma_chan_ctrl, output_buffer, false);
+            graphics_pending_output_buffer = output_buffer;
+            if (graphics_preframe)
+                dma_channel_set_read_addr(dma_chan_ctrl, graphics_pending_output_buffer, false);
             return;
         }
         // заполнение линии цветом фона
@@ -266,7 +362,9 @@ void __time_critical_func() dma_handler_VGA() {
                 *output_buffer_32bit++ = color32;
             }
         }
-        dma_channel_set_read_addr(dma_chan_ctrl, output_buffer, false);
+        graphics_pending_output_buffer = output_buffer;
+        if (graphics_preframe)
+            dma_channel_set_read_addr(dma_chan_ctrl, graphics_pending_output_buffer, false);
         return;
     };
 
@@ -314,50 +412,9 @@ void __time_critical_func() dma_handler_VGA() {
             break;
     }
 
-    /* FPS lives in the left border, never in the WS image. */
-    if (graphics_mode == GRAPHICSMODE_DEFAULT && graphics_fps_overlay_enabled &&
-        y >= 2 && y < 10 && graphics_buffer_shift_x >= 48) {
-        uint16_t *dst = (uint16_t *)(*output_buffer) + shift_picture / 2 + 2;
-        /* Each uint16_t carries two VGA pixels. Duplicate the 8-bit sample
-         * so HSYNC/VSYNC bits 7:6 remain valid in both pixels. */
-        const uint16_t overlay_color = (uint16_t)(txt_palette[0] & 0xffu) * 0x0101u;
-        const uint16_t overlay_bg_color = (uint16_t)(txt_palette[15] & 0xffu) * 0x0101u;
-        const unsigned glyph_row = (unsigned)y - 2u;
-
-        for (const char *p = graphics_fps_overlay_text; *p; ++p) {
-            uint8_t bits = font_6x8[(uint8_t)*p * 8u + glyph_row];
-            for (unsigned bit = 0; bit < 6; ++bit) {
-                dst[bit] = (bits & 1u) ? overlay_color : overlay_bg_color;
-                bits >>= 1;
-            }
-            dst += 6;
-        }
-    }
-
-    /* Demo title: same proven post-render path as FPS, on the last 8-pixel
-     * row of the physical 320x240 output. It never changes scanout control flow. */
-    const int output_y = (int)(screen_line / 2);
-    if (graphics_mode == GRAPHICSMODE_DEFAULT && graphics_demo_overlay_enabled &&
-        output_y >= N_lines_visible / 2 - 10 && output_y < N_lines_visible / 2 - 2) {
-        const size_t len = strlen(graphics_demo_overlay_text);
-        const int text_x = ((int)visible_line_size - (int)len * 6) / 2;
-        if (text_x >= 0) {
-            uint16_t *dst = (uint16_t *)(*output_buffer) + shift_picture / 2 + text_x;
-            const uint16_t overlay_color = (uint16_t)(txt_palette[0] & 0xffu) * 0x0101u;
-            const uint16_t overlay_bg_color = (uint16_t)(txt_palette[15] & 0xffu) * 0x0101u;
-            const unsigned glyph_row = (unsigned)(output_y - (N_lines_visible / 2 - 10));
-            for (const char *q = graphics_demo_overlay_text; *q; ++q) {
-                uint8_t bits = font_6x8[(uint8_t)*q * 8u + glyph_row];
-                for (unsigned bit = 0; bit < 6; ++bit) {
-                    dst[bit] = (bits & 1u) ? overlay_color : overlay_bg_color;
-                    bits >>= 1;
-                }
-                dst += 6;
-            }
-        }
-    }
-
-    dma_channel_set_read_addr(dma_chan_ctrl, output_buffer, false);
+    graphics_pending_output_buffer = output_buffer;
+    if (graphics_preframe)
+        dma_channel_set_read_addr(dma_chan_ctrl, graphics_pending_output_buffer, false);
 }
 
 void graphics_reclock() {

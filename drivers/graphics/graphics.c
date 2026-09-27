@@ -5,7 +5,8 @@
 volatile bool graphics_fps_overlay_enabled = false;
 char graphics_fps_overlay_text[8] = "--.-";
 volatile bool graphics_demo_overlay_enabled = false;
-char graphics_demo_overlay_text[53] = "";
+char graphics_demo_overlay_text[80] = "";
+uint8_t graphics_demo_overlay_text_len = 0;
 volatile uint8_t graphics_overlay_palette_index = 0;
 
 void graphics_set_fps_overlay(const bool enabled, const uint16_t fps_x10) {
@@ -26,6 +27,7 @@ void graphics_set_demo_overlay(const bool enabled, const char *text) {
     if (enabled && text && *text) {
         strncpy(graphics_demo_overlay_text, text, sizeof(graphics_demo_overlay_text) - 1);
         graphics_demo_overlay_text[sizeof(graphics_demo_overlay_text) - 1] = '\0';
+        graphics_demo_overlay_text_len = strlen(graphics_demo_overlay_text);
         graphics_demo_overlay_enabled = true;
     }
 }

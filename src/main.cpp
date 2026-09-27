@@ -2802,8 +2802,10 @@ int main() {
             const uint32_t *backplane_palette = portrait_enabled()
                 ? ws_backplane_hdmi_portrait_palette
                 : ws_backplane_palette;
-            for (unsigned i = 0; i < 144; ++i)
-                graphics_set_palette(ws_backplane_palette_slots[i], backplane_palette[i]);
+            for (unsigned i = 0; i < 144; ++i) {
+                const unsigned slot = 80 + i + (i >= 120 ? 16 : 0);
+                graphics_set_palette(slot, backplane_palette[i]);
+            }
         }
 #endif
 

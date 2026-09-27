@@ -58,7 +58,8 @@ extern char graphics_fps_overlay_text[8];
 /* Demo title uses the same scanout overlay path as FPS. */
 void graphics_set_demo_overlay(bool enabled, const char *text);
 extern volatile bool graphics_demo_overlay_enabled;
-extern char graphics_demo_overlay_text[53];
+extern char graphics_demo_overlay_text[80];
+extern uint8_t graphics_demo_overlay_text_len;
 extern volatile uint8_t graphics_overlay_palette_index;
 
 void draw_text(const char string[TEXTMODE_COLS + 1], uint32_t x, uint32_t y, uint8_t color, uint8_t bgcolor);

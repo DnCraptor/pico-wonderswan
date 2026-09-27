@@ -329,8 +329,7 @@ static void __scratch_y("hdmi_driver") dma_handler_HDMI() {
          * last 8-pixel row of the physical 320x240 output. */
         if (graphics_mode == GRAPHICSMODE_DEFAULT && graphics_demo_overlay_enabled &&
             y >= SCREEN_HEIGHT - 10 && y < SCREEN_HEIGHT - 2) {
-            size_t len = 0;
-            while (graphics_demo_overlay_text[len]) ++len;
+            size_t len = graphics_demo_overlay_text_len;
             const int text_x = (SCREEN_WIDTH - (int)len * 6) / 2;
             if (text_x >= 0) {
                 uint8_t *dst = activ_buf + 72 + text_x;
