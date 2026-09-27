@@ -89,7 +89,13 @@ void __not_in_flash_func(cpu_writemem20)(uint32_t addr, uint8_t value) {
 
     // 0 - RAM - 16 KB (WS) / 64 KB (WSC) internal RAM
     if (!bank) {
-        ws_gpu_write_byte(offset, value);
+        /* 0000-1fff is plain internal RAM on both WS and WSC. Keep this
+           fast path in the shared mapper instead of inlining address tests
+           throughout the NEC opcode handlers. */
+        if (__builtin_expect(offset < 0x2000, 1))
+            internalRam[offset] = value;
+        else
+            ws_gpu_write_byte(offset, value);
 //		ws_audio_write_byte(offset,value);
     } else
         // 1 - SRAM (cart)
