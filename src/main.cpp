@@ -1378,7 +1378,7 @@ uint8_t palette_index[PALETTE_LAYER_COUNT] = { PALETTE_DEFAULT, PALETTE_DEFAULT,
 bool show_fps = false;
 uint8_t audio_volume = 4;
 uint8_t audio_rate_shift = 0;
-uint8_t frame_skip = 0;   // 0=75Hz (render every frame) 1=50Hz 2=25Hz 3=Auto
+uint8_t frame_skip = 0;   // 0=Auto; 1..8 render 8..1 frames out of every 8
 
 static bool apply_audio_volume() {
     ws_audio_set_enabled(audio_volume != 0);
@@ -1763,7 +1763,7 @@ static bool load_config(void) {
         else if (!strcmp(key, "show_fps"))   show_fps = d != 0;
         else if (!strcmp(key, "volume"))     audio_volume = d <= 4 ? (uint8_t)d : 4;
         else if (!strcmp(key, "audio_rate")) audio_rate_shift = d <= 3 ? (uint8_t)d : 0;
-        else if (!strcmp(key, "frame_skip")) frame_skip = d <= 3 ? (uint8_t)d : 0;
+        else if (!strcmp(key, "frame_skip")) frame_skip = d <= 8 ? (uint8_t)d : 0;
         else if (!strcmp(key, "demo"))       demo_duration = d < count_of(demo_seconds) ? (uint8_t)d : 0;
         else if (!strcmp(key, "backplane"))  backplane_mode = d <= 1 ? (uint8_t)d : 0;
         else if (!strncmp(key, "palette", 7)) {
@@ -2253,7 +2253,7 @@ const MenuItem menu_items[] = {
         { "FPS overlay: %s", ARRAY, &show_fps, nullptr, 1, { "OFF", "ON " }},
         { "Volume: %s", ARRAY, &audio_volume, &apply_audio_volume, 4, { "Mute", "12% ", "25% ", "50% ", "100%" }},
         { "Emulate Sound: %s", ARRAY, &audio_rate_shift, &apply_audio_rate, 3, { "24 kHz", "12 kHz", "6 kHz ", "3 kHz " }},
-        { "Frame skip: %s", ARRAY, &frame_skip, nullptr, 3, { "75 Hz", "50 Hz", "25 Hz", "Auto " }},
+        { "Frame skip: %s", ARRAY, &frame_skip, nullptr, 8, { "Auto ", "75 Hz", "66 Hz", "57 Hz", "47 Hz", "38 Hz", "28 Hz", "19 Hz", "9 Hz " }},
         { "Back:      %s", ARRAY, &palette_index[PALETTE_BACK],     nullptr, 17, { "Default ", "Red     ", "Orange  ", "Green   ", "Blue    ", "Purple  ", "OGBP    ", "OGBR    ", "GBPR    ", "GBPO    ", "BPRO    ", "BROG    ", "PROG    ", "POGR    ", "ROGB    ", "ROGP    ", "Random  ", "Custom  " }},
         { "Screen 0:  %s", ARRAY, &palette_index[PALETTE_SCREEN0],  nullptr, 17, { "Default ", "Red     ", "Orange  ", "Green   ", "Blue    ", "Purple  ", "OGBP    ", "OGBR    ", "GBPR    ", "GBPO    ", "BPRO    ", "BROG    ", "PROG    ", "POGR    ", "ROGB    ", "ROGP    ", "Random  ", "Custom  " }},
         { "Sprites 0: %s", ARRAY, &palette_index[PALETTE_SPRITES0], nullptr, 17, { "Default ", "Red     ", "Orange  ", "Green   ", "Blue    ", "Purple  ", "OGBP    ", "OGBR    ", "GBPR    ", "GBPO    ", "BPRO    ", "BROG    ", "PROG    ", "POGR    ", "ROGB    ", "ROGP    ", "Random  ", "Custom  " }},
@@ -2825,7 +2825,8 @@ int main() {
         // i.e. one emulated frame every 13250 us (~75.47 Hz). Keep the pacing
         // clock available for every video backend, including SOFTTV.
         uint64_t next_ws_frame = time_us_64() + 13250;
-        uint8_t  fs_phase = 0;      // frame-skip phase counter (mod 3)
+        uint8_t  fs_phase = 0;      // frame-skip phase counter (mod 8)
+        uint8_t  fs_auto_eighths = 8; // Auto: current render share, 8/8 .. 1/8
         bool     fs_behind = false; // Auto: did the previous frame overrun its budget
         while (!reboot) {
             if (service_hotkeys(true)) {
@@ -2978,17 +2979,24 @@ graphics_overlay_palette_index = 0;
 
             /* Emulate every frame (CPU + audio stay at 75 Hz so the game runs at
                the right speed and the audio ring never starves); only skip the
-               visual render/present. 75/50/25 Hz = render 3/2/1 of every 3.
-               Auto drops the picture only while behind, with a 25 Hz floor so it
-               never freezes. */
+               visual render/present. Fixed modes render 8..1 frames out of every
+               eight, giving a finer GPU-cost diagnostic than the old 3/2/1 scale.
+               Auto uses the same full 8/8..1/8 range: each over-budget frame
+               reduces the render share by one step, and each on-time frame raises
+               it by one step. There is deliberately no artificial 25 Hz floor. */
             bool do_render;
-            switch (frame_skip) {
-                case 1:  do_render = (fs_phase != 2);                break; // 50 Hz
-                case 2:  do_render = (fs_phase == 0);                break; // 25 Hz
-                case 3:  do_render = (!fs_behind) || (fs_phase == 0);break; // Auto
-                default: do_render = true;                          break; // 75 Hz
+            if (frame_skip == 0) {
+                if (fs_behind) {
+                    if (fs_auto_eighths > 1) --fs_auto_eighths;
+                } else if (fs_auto_eighths < 8) {
+                    ++fs_auto_eighths;
+                }
+                do_render = fs_phase < fs_auto_eighths;
+            } else {
+                const uint8_t render_eighths = (uint8_t)(9u - frame_skip); // 8..1
+                do_render = fs_phase < render_eighths;
             }
-            fs_phase = (fs_phase >= 2) ? 0 : (uint8_t)(fs_phase + 1);
+            fs_phase = (uint8_t)((fs_phase + 1u) & 7u);
 
             while(!ws_executeLine(buffer, do_render ? 1 : 0)) ;
             if (do_render) {

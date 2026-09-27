@@ -43,7 +43,7 @@ uint32 romAddressMask;
 static uint32 romSize;
 static uint32 cartSramSize;
 static uint32 cartEepromSize;
-static uint32 romBankBase[16];
+static uint32 romBankBase[16] __scratch_y("rom_bank_base");
 
 
 

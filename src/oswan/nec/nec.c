@@ -89,7 +89,7 @@ static uint32_t nec_execute_base_clock;
 static int nec_execute_active;
 #endif
 
-static nec_Regs I;
+static nec_Regs I __scratch_y("nec_state");
 
 static UINT32 cpu_type;
 static UINT32 prefix_base;	/* base address of the latest prefix segment */
