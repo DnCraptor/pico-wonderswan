@@ -1179,7 +1179,7 @@ static bool __time_critical_func(video_timer_callbackTV)(repeating_timer_t* rt) 
 
                             if (y >= graphics_buffer.shift_y &&
                                 y < graphics_buffer.shift_y + (int)graphics_buffer.height) {
-                                const int dst_x = graphics_buffer.shift_x + 1;
+                                const int dst_x = graphics_buffer.shift_x;// + 1;
                                 if (dst_x < 320) {
                                     int copy_width = (int)graphics_buffer.width;
                                     if (copy_width > 320 - dst_x)
@@ -1269,6 +1269,33 @@ void graphics_set_buffer(uint8_t* buffer, const uint16_t width, const uint16_t h
 }
 
 //выделение и настройка общих ресурсов - 4 DMA канала, PIO программ и 2 SM
+/* The 200..215 CGA palette the text/menu renderer uses. A colour (.wsc) game
+   writes its own palette into these SHARED conv_color slots (palettes 12-13),
+   which corrupts the menu/file-manager colours. graphics_set_mode() below backs
+   up the game's originals and re-applies these on entry to text mode, then
+   restores the game's on return, so neither clobbers the other. */
+static uint32_t tv_ui_pal_backup[16];
+static bool tv_ui_pal_saved = false;
+
+static void tv_set_ui_palette(void) {
+    graphics_set_palette(200, RGB888(0x00, 0x00, 0x00)); //black
+    graphics_set_palette(201, RGB888(0x00, 0x00, 0xC4)); //blue
+    graphics_set_palette(202, RGB888(0x00, 0xC4, 0x00)); //green
+    graphics_set_palette(203, RGB888(0x00, 0xC4, 0xC4)); //cyan
+    graphics_set_palette(204, RGB888(0xC4, 0x00, 0x00)); //red
+    graphics_set_palette(205, RGB888(0xC4, 0x00, 0xC4)); //magenta
+    graphics_set_palette(206, RGB888(0xC4, 0x7E, 0x00)); //brown
+    graphics_set_palette(207, RGB888(0xC4, 0xC4, 0xC4)); //light gray
+    graphics_set_palette(208, RGB888(0x4E, 0x4E, 0x4E)); //dark gray
+    graphics_set_palette(209, RGB888(0x4E, 0x4E, 0xDC)); //light blue
+    graphics_set_palette(210, RGB888(0x4E, 0xDC, 0x4E)); //light green
+    graphics_set_palette(211, RGB888(0x4E, 0xF3, 0xF3)); //light cyan
+    graphics_set_palette(212, RGB888(0xDC, 0x4E, 0x4E)); //light red
+    graphics_set_palette(213, RGB888(0xF3, 0x4E, 0xF3)); //light magenta
+    graphics_set_palette(214, RGB888(0xF3, 0xF3, 0x4E)); //yellow
+    graphics_set_palette(215, RGB888(0xFF, 0xFF, 0xFF)); //white
+}
+
 void graphics_init() {
     //настройка PIO
     SM_video = pio_claim_unused_sm(PIO_VIDEO, true);
@@ -1396,22 +1423,7 @@ void graphics_init() {
     // graphics_get_default_modeTV();
     graphics_set_modeTV(tv_out_mode);
     // FIXME сделать конфигурацию пользователем
-    graphics_set_palette(200, RGB888(0x00, 0x00, 0x00)); //black
-    graphics_set_palette(201, RGB888(0x00, 0x00, 0xC4)); //blue
-    graphics_set_palette(202, RGB888(0x00, 0xC4, 0x00)); //green
-    graphics_set_palette(203, RGB888(0x00, 0xC4, 0xC4)); //cyan
-    graphics_set_palette(204, RGB888(0xC4, 0x00, 0x00)); //red
-    graphics_set_palette(205, RGB888(0xC4, 0x00, 0xC4)); //magenta
-    graphics_set_palette(206, RGB888(0xC4, 0x7E, 0x00)); //brown
-    graphics_set_palette(207, RGB888(0xC4, 0xC4, 0xC4)); //light gray
-    graphics_set_palette(208, RGB888(0x4E, 0x4E, 0x4E)); //dark gray
-    graphics_set_palette(209, RGB888(0x4E, 0x4E, 0xDC)); //light blue
-    graphics_set_palette(210, RGB888(0x4E, 0xDC, 0x4E)); //light green
-    graphics_set_palette(211, RGB888(0x4E, 0xF3, 0xF3)); //light cyan
-    graphics_set_palette(212, RGB888(0xDC, 0x4E, 0x4E)); //light red
-    graphics_set_palette(213, RGB888(0xF3, 0x4E, 0xF3)); //light magenta
-    graphics_set_palette(214, RGB888(0xF3, 0xF3, 0x4E)); //yellow
-    graphics_set_palette(215, RGB888(0xFF, 0xFF, 0xFF)); //white
+    tv_set_ui_palette();
 };
 
 void graphics_set_textbuffer(uint8_t* buffer) {
@@ -1434,6 +1446,23 @@ void graphics_reclock() {
 }
 
 void graphics_set_mode(const enum graphics_mode_t mode) {
+    if (mode == TEXTMODE_DEFAULT) {
+        /* Entering text/menu: back up the game's 200..215 once, install the UI
+           palette so the menu is legible even after a colour game overwrote it. */
+        if (!tv_ui_pal_saved) {
+            for (int i = 0; i < 16; ++i)
+                tv_ui_pal_backup[i] = (paletteRGB[2][200 + i] << 16) |
+                                      (paletteRGB[1][200 + i] << 8) |
+                                      (paletteRGB[0][200 + i] << 0);
+            tv_ui_pal_saved = true;
+        }
+        tv_set_ui_palette();
+    } else if (tv_ui_pal_saved) {
+        /* Returning to the game: put its original 200..215 back. */
+        for (int i = 0; i < 16; ++i)
+            graphics_set_palette(200 + i, tv_ui_pal_backup[i]);
+        tv_ui_pal_saved = false;
+    }
     tv_out_mode.mode_bpp = mode;
     tv_out_mode.color_index = TEXTMODE_DEFAULT == mode ? 0.0 : 1.0;
     // tv_out_mode.cb_sync_PI_shift_lines = TEXTMODE_DEFAULT == mode ? true : false;
