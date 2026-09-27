@@ -176,7 +176,7 @@ size_t wonderswan_qspi_rom_capacity(void) {
     return psram_available ? psram_size : 0;
 }
 uintptr_t wonderswan_qspi_aux_base(void) {
-    return psram_available ? WONDERSWAN_QSPI_PSRAM_UNCACHED_BASE + psram_aux_offset : 0;
+    return psram_available ? WONDERSWAN_QSPI_PSRAM_BASE + psram_aux_offset : 0;
 }
 
 bool wonderswan_qspi_set_aux_region(size_t offset, size_t size) {
