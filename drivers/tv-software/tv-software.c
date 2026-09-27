@@ -1172,9 +1172,9 @@ static bool __time_critical_func(video_timer_callbackTV)(repeating_timer_t* rt) 
                             if (ws_backplane_enabled) {
                                 const uint8_t *bp_image = ws_backplane_portrait
                                     ? ws_backplane_hdmi_portrait : ws_backplane;
-                                memcpy(compose_line, bp_image + (unsigned)y * 320u, 320u);
+                                tv_memcpy(compose_line, bp_image + (unsigned)y * 320u, 320u);
                             } else {
-                                memset(compose_line, 200, sizeof(compose_line));
+                                tv_memset(compose_line, 200, sizeof(compose_line));
                             }
 
                             if (y >= graphics_buffer.shift_y &&
@@ -1187,7 +1187,7 @@ static bool __time_critical_func(video_timer_callbackTV)(repeating_timer_t* rt) 
                                     if (copy_width > 0) {
                                         const uint8_t *src = input_buffer +
                                             (y - graphics_buffer.shift_y) * graphics_buffer.width;
-                                        memcpy(compose_line + dst_x, src, (size_t)copy_width);
+                                        tv_memcpy(compose_line + dst_x, src, (size_t)copy_width);
                                     }
                                 }
                             }

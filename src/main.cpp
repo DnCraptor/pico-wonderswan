@@ -2282,7 +2282,7 @@ const MenuItem menu_items[] = {
         {},
 #if SOFTTV
         { "TV system: %s", ARRAY, &ws_tv_system, &apply_tv_system, 1, { "PAL ", "NTSC" } },
-        { "Colors: %s", ARRAY, &color_mode, &toggle_color, 1, { "NO ", "YES" } },
+     //   { "Colors: %s", ARRAY, &color_mode, &toggle_color, 1, { "NO ", "YES" } },
 #endif
         {
                 "Overclocking: %s MHz", ARRAY, &frequency_index, &overclock, count_of(frequencies) - 1,
