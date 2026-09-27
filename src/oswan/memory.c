@@ -147,6 +147,24 @@ uint8_t __not_in_flash_func(cpu_readop20)(uint32_t addr) {
     return cpu_readmem20(addr);
 }
 
+/* Fill one aligned 16-byte cartridge instruction block with four naturally
+ * aligned 32-bit reads. Return 0 for RAM/SRAM execution so the NEC core can
+ * fall back to the normal byte accessor without caching mutable memory. */
+int __not_in_flash_func(cpu_readop_fill16)(uint32_t addr, uint8_t *dst) {
+    const uint32 bank = addr >> 16;
+    if (__builtin_expect(bank < 2 || bank >= 16, 0))
+        return 0;
+
+    const uint32 offset = romBankBase[bank] + (addr & 0xffffu);
+    const uint32_t *src = (const uint32_t *)(ws_rom + offset);
+    uint32_t *out = (uint32_t *)dst;
+    out[0] = src[0];
+    out[1] = src[1];
+    out[2] = src[2];
+    out[3] = src[3];
+    return 1;
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 //
 ////////////////////////////////////////////////////////////////////////////////

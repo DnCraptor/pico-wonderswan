@@ -96,6 +96,48 @@ static UINT32 prefix_base;	/* base address of the latest prefix segment */
 char seg_prefix;		/* prefix segment indicator */
 static int no_interrupt;
 
+/* Host-side 16-byte instruction window. WonderSwan cartridge ROM lives in
+ * QSPI PSRAM, so filling one aligned block is substantially cheaper than
+ * fetching every opcode/immediate byte separately. This does not alter the
+ * guest cycle model; it only accelerates the backing instruction reads. */
+static uint32_t nec_prefetch_base  __scratch_y("nec_prefetch_base") = UINT32_MAX;
+static uint8_t nec_prefetch[16] __attribute__((aligned(4))) __scratch_y("nec_prefetch");
+
+static inline __attribute__((always_inline)) UINT8 nec_fetch8(void)
+{
+    const uint32_t addr = ((uint32_t)I.sregs[CS] << 4) + I.ip;
+
+    if (__builtin_expect((addr - nec_prefetch_base) < sizeof(nec_prefetch), 1)) {
+        const UINT8 value = nec_prefetch[addr - nec_prefetch_base];
+        I.ip++;
+        return value;
+    }
+
+    const uint32_t base = addr & ~15u;
+    if (__builtin_expect(cpu_readop_fill16(base, nec_prefetch), 1)) {
+        nec_prefetch_base = base;
+        const UINT8 value = nec_prefetch[addr - base];
+        I.ip++;
+        return value;
+    }
+
+    nec_prefetch_base = UINT32_MAX;
+    const UINT8 value = cpu_readop20(addr);
+    I.ip++;
+    return value;
+}
+
+static inline __attribute__((always_inline)) UINT16 nec_fetch16(void)
+{
+    const UINT16 lo = nec_fetch8();
+    return (UINT16)(lo | ((UINT16)nec_fetch8() << 8));
+}
+
+static inline void nec_prefetch_invalidate(void)
+{
+    nec_prefetch_base = UINT32_MAX;
+}
+
 
 void nec_snapshot_get(nec_snapshot_t *state)
 {
@@ -113,6 +155,7 @@ void nec_snapshot_get(nec_snapshot_t *state)
 
 void nec_snapshot_set(const nec_snapshot_t *state)
 {
+    nec_prefetch_invalidate();
     memcpy(I.regs.w, state->regs, sizeof(state->regs));
     memcpy(I.sregs, state->sregs, sizeof(state->sregs));
     I.ip = state->ip;
@@ -139,6 +182,7 @@ static UINT8 parity_table[256];
 
 void nec_reset (void *param)
 {
+    nec_prefetch_invalidate();
     unsigned int i,j,c;
     BREGS reg_name[8]={ AL, CL, DL, BL, AH, CH, DH, BH };
 
