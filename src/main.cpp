@@ -2670,6 +2670,26 @@ void __time_critical_func(render_core)() {
 
 int frame;
 
+#if defined(SOFTTV)
+/* Software-composite washes chroma out on big flat fills, so the backplane
+   looks greyish. Boost ONLY the backplane palette saturation (luma kept)
+   before loading it; games use other indices and stay untouched. */
+static uint32_t softtv_backplane_saturate(uint32_t rgb) {
+    const int R = (int)((rgb >> 16) & 0xff);
+    const int G = (int)((rgb >> 8) & 0xff);
+    const int B = (int)(rgb & 0xff);
+    const int Y = (299 * R + 587 * G + 114 * B) / 1000;
+    const int s = 170; /* saturation x1.70 (/100); raise for more colour */
+    int r = Y + (R - Y) * s / 100;
+    int g = Y + (G - Y) * s / 100;
+    int bl = Y + (B - Y) * s / 100;
+    r  = r  < 0 ? 0 : (r  > 255 ? 255 : r);
+    g  = g  < 0 ? 0 : (g  > 255 ? 255 : g);
+    bl = bl < 0 ? 0 : (bl > 255 ? 255 : bl);
+    return ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)bl;
+}
+#endif
+
 int main() {
     overclock();
 
@@ -2811,7 +2831,11 @@ int main() {
                 : ws_backplane_palette;
             for (unsigned i = 0; i < 144; ++i) {
                 const unsigned slot = 80 + i + (i >= 120 ? 16 : 0);
-                graphics_set_palette(slot, backplane_palette[i]);
+                uint32_t bp = backplane_palette[i];
+#if defined(SOFTTV)
+                bp = softtv_backplane_saturate(bp);
+#endif
+                graphics_set_palette(slot, bp);
             }
         }
 #endif
