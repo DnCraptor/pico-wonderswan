@@ -633,7 +633,7 @@ bool filebrowser_loadfile(const char pathname[256], bool show_ui = true) {
 }
 
 
-static bool demo_load_next_rom(const char *after_name) {
+static bool demo_load_next_rom(const char *after_name, bool inclusive) {
     if (FR_OK != f_mount(&fs, "SD", 1))
         return false;
 
@@ -659,7 +659,8 @@ static bool demo_load_next_rom(const char *after_name) {
                 continue;
             if (strlen(fs_info.fname) >= sizeof(best))
                 continue;
-            if (after[0] && strcmp(fs_info.fname, after) <= 0)
+            const int cmp = strcmp(fs_info.fname, after);
+            if (after[0] && (inclusive ? cmp < 0 : cmp <= 0))
                 continue;
             if (!best[0] || strcmp(fs_info.fname, best) < 0) {
                 strncpy(best, fs_info.fname, sizeof(best) - 1);
@@ -903,6 +904,12 @@ void filebrowser(const char pathname[256], const char executables[11], const cha
             if (!demo_button)
                 demo_debounce = true;
             if (demo_debounce && demo_button) {
+                /* Start Demo from the highlighted entry (for quick testing);
+                   demo_load_next_rom(inclusive) skips it if it is ".."/a
+                   directory/non-ROM and takes the next valid ROM. */
+                strncpy(demo_current_name, fileItems[offset + current_item].filename,
+                        sizeof(demo_current_name) - 1);
+                demo_current_name[sizeof(demo_current_name) - 1] = '\0';
                 demo_requested = true;
                 return;
             }
@@ -2736,7 +2743,7 @@ int main() {
     demo_requested = false;
     demo_advance_pending = false;
     demo_current_name[0] = '\0';
-    if (!demo_load_next_rom(nullptr)) {
+    if (!demo_load_next_rom(nullptr, false)) {
         demo_stop();
         need_browser = true;
     }
@@ -2755,8 +2762,8 @@ int main() {
             if (demo_requested) {
                 demo_requested = false;
                 demo_active = true;
-                demo_current_name[0] = '\0';
-                if (!demo_load_next_rom(nullptr)) {
+                if (!demo_load_next_rom(
+                        demo_current_name[0] ? demo_current_name : nullptr, true)) {
                     demo_stop();
                     continue;
                 }
@@ -2770,7 +2777,7 @@ int main() {
             graphics_set_mode(TEXTMODE_DEFAULT);
             draw_text("ERROR: not enough RAM for cartridge save memory!", 0, 0, 13, 0);
             sleep_ms(demo_active ? 1500 : 5000);
-            if (demo_active && demo_load_next_rom(demo_current_name))
+            if (demo_active && demo_load_next_rom(demo_current_name, false))
                 continue;
             demo_stop();
             need_browser = true;
@@ -3108,13 +3115,15 @@ graphics_overlay_palette_index = 0;
             demo_requested = false;
             demo_active = true;
             demo_advance_pending = false;
-            demo_current_name[0] = '\0';
-            if (demo_load_next_rom(nullptr))
+            /* Start from the entry chosen in the browser / F10 browser
+               (demo_current_name holds it); empty -> from the first ROM. */
+            if (demo_load_next_rom(
+                    demo_current_name[0] ? demo_current_name : nullptr, true))
                 continue;
             demo_stop();
         } else if (demo_active && demo_advance_pending) {
             demo_advance_pending = false;
-            if (demo_load_next_rom(demo_current_name))
+            if (demo_load_next_rom(demo_current_name, false))
                 continue;
             demo_stop();
         } else if (demo_active) {

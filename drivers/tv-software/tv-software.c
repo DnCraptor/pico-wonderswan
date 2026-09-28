@@ -431,7 +431,7 @@ void graphics_set_palette(uint8_t i, uint32_t color888) {
     conv_colorINV[1][i] = (c32 >> 16) | ((c32 & 0xffff) << 16);
 }
 
-void *__not_in_flash_func(tv_memcpy)(void *dst,
+void* __scratch_y("tv_memcpy") tv_memcpy(void *dst,
                                           const void *src,
                                           size_t len)
 {
@@ -464,7 +464,7 @@ void *__not_in_flash_func(tv_memcpy)(void *dst,
     return dst;
 }
 
-static inline void* __not_in_flash_func(tv_memset)(void* ptr, int value, size_t len)
+static void* __scratch_y("tv_memset") tv_memset(void* ptr, int value, size_t len)
 {
     uint8_t* p = (uint8_t*)ptr;
     uint8_t v8 = (uint8_t)value;
@@ -500,22 +500,6 @@ static inline void* __not_in_flash_func(tv_memset)(void* ptr, int value, size_t 
     return ptr;
 }
 
-
-//основная функция заполнения буферов видеоданных
-/* RAM-resident byte fill for the __time_critical path. memset() lives in
-   flash, so calling it from here stalls on XIP and evicts the main program's
-   cached code; this stays in SRAM. optimize(no-tree-loop-distribute-patterns)
-   stops the compiler folding the loop back into a memset call. Word-wide, so
-   it is also faster than the byte memset it replaces. */
-__attribute__((optimize("no-tree-loop-distribute-patterns")))
-static void __not_in_flash_func(tv_fill8)(uint8_t* d, uint8_t v, int n) {
-    while (((uintptr_t)d & 3u) && n > 0) { *d++ = v; --n; }
-    const uint32_t w = (uint32_t)v * 0x01010101u;
-    uint32_t* p = (uint32_t*)d;
-    for (int k = n >> 2; k > 0; --k) *p++ = w;
-    d = (uint8_t*)p;
-    for (n &= 3; n > 0; --n) *d++ = v;
-}
 
 static bool __time_critical_func(video_timer_callbackTV)(repeating_timer_t* rt) {
     static uint dma_inx_out = 0;
@@ -974,13 +958,13 @@ static bool __time_critical_func(video_timer_callbackTV)(repeating_timer_t* rt) 
 
             if ((y >= 240) || (y < 0) || (input_buffer == NULL)) {
                 //вне изображения
-                tv_fill8(output_buffer8, video_mode.LVL_BLACK_TMPL, video_mode.img_W);
+                tv_memset(output_buffer8, video_mode.LVL_BLACK_TMPL, video_mode.img_W);
             }
             else {
                 /* Clear the full active width before rendering (fast,
-                   RAM-resident tv_fill8 - never tv_memset() from this path).
+                   RAM-resident tv_memset - never libc memset() from this path).
                    Kills the top-right ping-pong artifact without touching XIP. */
-                tv_fill8(output_buffer8, video_mode.LVL_BLACK_TMPL, video_mode.img_W);
+                tv_memset(output_buffer8, video_mode.LVL_BLACK_TMPL, video_mode.img_W);
                 //зона изображения
                 //цветовая вспышка(тест в зоне изображения)
                 // if (li)	tv_memcpy(out_buf8-v_mode.begin_img_shx+22*4,cb[1],40);
@@ -1179,7 +1163,7 @@ static bool __time_critical_func(video_timer_callbackTV)(repeating_timer_t* rt) 
 
                             if (y >= graphics_buffer.shift_y &&
                                 y < graphics_buffer.shift_y + (int)graphics_buffer.height) {
-                                const int dst_x = graphics_buffer.shift_x;// + 1;
+                                const int dst_x = graphics_buffer.shift_x;
                                 if (dst_x < 320) {
                                     int copy_width = (int)graphics_buffer.width;
                                     if (copy_width > 320 - dst_x)
