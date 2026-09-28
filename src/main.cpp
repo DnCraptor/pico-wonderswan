@@ -1156,9 +1156,9 @@ bool overclock() {
         sleep_ms(33);
         *qmi_m0_timing = 0x60007204;
         const bool res = set_sys_clock_khz(target_khz, false);
-#ifndef ZERO
+//.#ifndef ZERO
         *qmi_m0_timing = 0x60007303;
-#endif
+//.#endif
         graphics_set_mode(TEXTMODE_DEFAULT);
         return res;
     }

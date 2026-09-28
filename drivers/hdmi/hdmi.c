@@ -534,6 +534,7 @@ static inline bool hdmi_init() {
 
     //основной рабочий канал
     dma_channel_config cfg_dma = dma_channel_get_default_config(dma_chan);
+    channel_config_set_high_priority(&cfg_dma, true); // win bus arbitration -> no TMDS underrun
     channel_config_set_transfer_data_size(&cfg_dma, DMA_SIZE_8);
     channel_config_set_chain_to(&cfg_dma, dma_chan_ctrl); // chain to other channel
 
@@ -557,6 +558,7 @@ static inline bool hdmi_init() {
 
     //контрольный канал для основного
     cfg_dma = dma_channel_get_default_config(dma_chan_ctrl);
+    channel_config_set_high_priority(&cfg_dma, true);
     channel_config_set_transfer_data_size(&cfg_dma, DMA_SIZE_32);
     channel_config_set_chain_to(&cfg_dma, dma_chan); // chain to other channel
 
@@ -578,6 +580,7 @@ static inline bool hdmi_init() {
     //канал - конвертер палитры
 
     cfg_dma = dma_channel_get_default_config(dma_chan_pal_conv);
+    channel_config_set_high_priority(&cfg_dma, true);
     channel_config_set_transfer_data_size(&cfg_dma, DMA_SIZE_32);
     channel_config_set_chain_to(&cfg_dma, dma_chan_pal_conv_ctrl); // chain to other channel
 
@@ -601,6 +604,7 @@ static inline bool hdmi_init() {
     //канал управления конвертером палитры
 
     cfg_dma = dma_channel_get_default_config(dma_chan_pal_conv_ctrl);
+    channel_config_set_high_priority(&cfg_dma, true);
     channel_config_set_transfer_data_size(&cfg_dma, DMA_SIZE_32);
     channel_config_set_chain_to(&cfg_dma, dma_chan_pal_conv); // chain to other channel
 
