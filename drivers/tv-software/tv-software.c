@@ -1109,12 +1109,17 @@ static bool __time_critical_func(video_timer_callbackTV)(repeating_timer_t* rt) 
                                 y >= graphics_buffer.shift_y + 2 &&
                                 y < graphics_buffer.shift_y + 10 &&
                                 graphics_buffer.shift_x >= 48;
+                            const bool countdown_row =
+                                graphics_demo_countdown_enabled &&
+                                y >= graphics_buffer.shift_y + 10 &&
+                                y < graphics_buffer.shift_y + 18 &&
+                                graphics_buffer.shift_x >= 48;
                             const bool demo_row =
                                 graphics_demo_overlay_enabled && y >= 230 && y < 238;
 
                             /* Preserve the original SOFTTV hot path byte-for-byte
                                whenever this scanline needs no compositor work. */
-                            if (!ws_backplane_enabled && !fps_row && !demo_row) {
+                            if (!ws_backplane_enabled && !fps_row && !countdown_row && !demo_row) {
                                 if (y < graphics_buffer.shift_y ||
                                     y >= graphics_buffer.height + graphics_buffer.shift_y) {
                                     for (int i = 0; i < video_mode.img_W - d_end; i++) {
@@ -1181,6 +1186,19 @@ static bool __time_critical_func(video_timer_callbackTV)(repeating_timer_t* rt) 
                                 const unsigned glyph_row =
                                     (unsigned)(y - graphics_buffer.shift_y - 2);
                                 for (const char *p = graphics_fps_overlay_text; *p; ++p) {
+                                    uint8_t bits = font_6x8[(uint8_t)*p * 8u + glyph_row];
+                                    for (unsigned bit = 0; bit < 6; ++bit) {
+                                        *dst++ = (bits & 1u) ? 0 : 15;
+                                        bits >>= 1;
+                                    }
+                                }
+                            }
+
+                            if (countdown_row) {
+                                uint8_t *dst = compose_line + 2;
+                                const unsigned glyph_row =
+                                    (unsigned)(y - graphics_buffer.shift_y - 10);
+                                for (const char *p = graphics_demo_countdown_text; *p; ++p) {
                                     uint8_t bits = font_6x8[(uint8_t)*p * 8u + glyph_row];
                                     for (unsigned bit = 0; bit < 6; ++bit) {
                                         *dst++ = (bits & 1u) ? 0 : 15;
@@ -1326,6 +1344,7 @@ void graphics_init() {
 
     //основной рабочий канал
     dma_channel_config cfg_dma = dma_channel_get_default_config(dma_chan);
+    channel_config_set_high_priority(&cfg_dma, true); // win bus arbitration -> no underrun
     channel_config_set_transfer_data_size(&cfg_dma, DMA_SIZE_8);
     channel_config_set_chain_to(&cfg_dma, dma_chan_ctrl2); // chain to other channel
 
@@ -1348,6 +1367,7 @@ void graphics_init() {
 
     //контрольный канал для основного(адрес чтения)
     cfg_dma = dma_channel_get_default_config(dma_chan_ctrl);
+    channel_config_set_high_priority(&cfg_dma, true);
     channel_config_set_transfer_data_size(&cfg_dma, DMA_SIZE_32);
     channel_config_set_chain_to(&cfg_dma, dma_chan); // chain to other channel
 
@@ -1369,6 +1389,7 @@ void graphics_init() {
 
     //контрольный канал для основного(количество транзакций)
     cfg_dma = dma_channel_get_default_config(dma_chan_ctrl2);
+    channel_config_set_high_priority(&cfg_dma, true);
     channel_config_set_transfer_data_size(&cfg_dma, DMA_SIZE_32);
     channel_config_set_chain_to(&cfg_dma, dma_chan_ctrl); // chain to other channel
 

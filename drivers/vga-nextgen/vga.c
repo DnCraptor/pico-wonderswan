@@ -304,6 +304,30 @@ void __time_critical_func() dma_handler_VGA() {
             }
         }
     }
+    if (graphics_mode == GRAPHICSMODE_DEFAULT && graphics_demo_countdown_enabled &&
+        line_number >= 14 && line_number < 24) {
+        uint16_t *dst = (uint16_t *)(*output_buffer) + (shift_picture >> 1) + 294;
+        if (line_number >= 22) {
+            /* Keep both VGA scanline templates clean after the last glyph row. */
+            for (const char *p = graphics_demo_countdown_text; *p; ++p) {
+                for (unsigned bit = 0; bit < 6; ++bit)
+                    dst[bit] = 0xC0C0;
+                dst += 6;
+            }
+        } else {
+            const uint16_t overlay_color = (uint16_t)(txt_palette[15] & 0xffu) * 0x0101u;
+            const uint16_t overlay_bg_color = (uint16_t)(txt_palette[0] & 0xffu) * 0x0101u;
+            const unsigned glyph_row = (unsigned)line_number - 14;
+            for (const char *p = graphics_demo_countdown_text; *p; ++p) {
+                uint8_t bits = font_6x8[(uint8_t)*p * 8u + glyph_row];
+                for (unsigned bit = 0; bit < 6; ++bit) {
+                    dst[bit] = (bits & 1u) ? overlay_color : overlay_bg_color;
+                    bits >>= 1;
+                }
+                dst += 6;
+            }
+        }
+    }
     /* Demo title lives in the bottom border, outside the WS framebuffer.
      * Draw it before the framebuffer bounds checks so it is also reachable
      * when the backplane is disabled. */
@@ -338,7 +362,7 @@ void __time_critical_func() dma_handler_VGA() {
     }
     if (y < 0) {
         graphics_pending_output_buffer =
-            (ws_backplane_enabled || graphics_fps_overlay_enabled) ? output_buffer : &lines_pattern[0];
+            (ws_backplane_enabled || graphics_fps_overlay_enabled || graphics_demo_countdown_enabled) ? output_buffer : &lines_pattern[0];
         if (graphics_preframe)
             dma_channel_set_read_addr(dma_chan_ctrl, graphics_pending_output_buffer, false);
         return;
@@ -654,6 +678,7 @@ void graphics_init() {
     dma_chan = dma_claim_unused_channel(true);
     //основной ДМА канал для данных
     dma_channel_config c0 = dma_channel_get_default_config(dma_chan);
+    channel_config_set_high_priority(&c0, true); // win bus arbitration -> no underrun
     channel_config_set_transfer_data_size(&c0, DMA_SIZE_32);
 
     channel_config_set_read_increment(&c0, true);
@@ -675,6 +700,7 @@ void graphics_init() {
     );
     //канал DMA для контроля основного канала
     dma_channel_config c1 = dma_channel_get_default_config(dma_chan_ctrl);
+    channel_config_set_high_priority(&c1, true);
     channel_config_set_transfer_data_size(&c1, DMA_SIZE_32);
 
     channel_config_set_read_increment(&c1, false);

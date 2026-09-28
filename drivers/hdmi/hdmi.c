@@ -325,6 +325,22 @@ static void __scratch_y("hdmi_driver") dma_handler_HDMI() {
             }
         }
 
+        /* Demo countdown: one 6x8 row directly below FPS in the left border. */
+        if (graphics_mode == GRAPHICSMODE_DEFAULT && graphics_demo_countdown_enabled &&
+            y >= displayed_graphics_buffer_shift_y + 10 && y < displayed_graphics_buffer_shift_y + 18 &&
+            displayed_graphics_buffer_shift_x >= 48) {
+            uint8_t *dst = activ_buf + 72 + 2;
+            const unsigned glyph_row = (unsigned)(y - displayed_graphics_buffer_shift_y - 10);
+            for (const char *p = graphics_demo_countdown_text; *p; ++p) {
+                uint8_t bits = font_6x8[(uint8_t)*p * 8u + glyph_row];
+                for (unsigned bit = 0; bit < 6; ++bit) {
+                    dst[bit] = (bits & 1) ? 0 : 15;
+                    bits >>= 1;
+                }
+                dst += 6;
+            }
+        }
+
         /* Demo title: same post-render mechanism as FPS, centered on the
          * last 8-pixel row of the physical 320x240 output. */
         if (graphics_mode == GRAPHICSMODE_DEFAULT && graphics_demo_overlay_enabled &&

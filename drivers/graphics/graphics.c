@@ -4,6 +4,8 @@
 
 volatile bool graphics_fps_overlay_enabled = false;
 char graphics_fps_overlay_text[8] = "--.-";
+volatile bool graphics_demo_countdown_enabled = false;
+char graphics_demo_countdown_text[8] = "";
 volatile bool graphics_demo_overlay_enabled = false;
 char graphics_demo_overlay_text[80] = "";
 uint8_t graphics_demo_overlay_text_len = 0;
@@ -18,6 +20,14 @@ void graphics_set_fps_overlay(const bool enabled, const uint16_t fps_x10) {
         snprintf(graphics_fps_overlay_text, sizeof(graphics_fps_overlay_text),
                  "%u.%u", fps, tenth);
         graphics_fps_overlay_enabled = true;
+    }
+}
+
+void graphics_set_demo_countdown(const bool enabled, const unsigned seconds) {
+    graphics_demo_countdown_enabled = false;
+    if (enabled) {
+        snprintf(graphics_demo_countdown_text, sizeof(graphics_demo_countdown_text), "%04u", seconds);
+        graphics_demo_countdown_enabled = true;
     }
 }
 

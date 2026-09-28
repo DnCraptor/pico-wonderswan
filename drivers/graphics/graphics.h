@@ -55,6 +55,11 @@ void graphics_set_fps_overlay(bool enabled, uint16_t fps_x10);
 extern volatile bool graphics_fps_overlay_enabled;
 extern char graphics_fps_overlay_text[8];
 
+/* Demo countdown is a separate border row directly below FPS. */
+void graphics_set_demo_countdown(bool enabled, unsigned seconds);
+extern volatile bool graphics_demo_countdown_enabled;
+extern char graphics_demo_countdown_text[8];
+
 /* Demo title uses the same scanout overlay path as FPS. */
 void graphics_set_demo_overlay(bool enabled, const char *text);
 extern volatile bool graphics_demo_overlay_enabled;
