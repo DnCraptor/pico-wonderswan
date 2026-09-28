@@ -61,12 +61,19 @@ static void process_generic(uint8_t instance, uint8_t const *report, uint16_t le
 
 extern "C" void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance,
                                   uint8_t const *desc_report, uint16_t desc_len) {
+    uint8_t const itf_proto = tuh_hid_interface_protocol(dev_addr, instance);
     if (instance < CFG_TUH_HID) {
         memset(&hid_info[instance], 0, sizeof(hid_info[instance]));
-        if (tuh_hid_interface_protocol(dev_addr, instance) == HID_ITF_PROTOCOL_NONE)
+        if (itf_proto == HID_ITF_PROTOCOL_NONE)
             hid_info[instance].count = tuh_hid_parse_report_descriptor(
                 hid_info[instance].info, MAX_REPORT, desc_report, desc_len);
     }
+    /* Force the BOOT protocol on boot-capable keyboards so they send the
+       standard 8-byte report we understand, instead of a report-protocol
+       layout we would misread. Non-boot keyboards ignore/stall this and keep
+       the report path (handled by process_generic). */
+    if (itf_proto == HID_ITF_PROTOCOL_KEYBOARD)
+        tuh_hid_set_protocol(dev_addr, instance, HID_PROTOCOL_BOOT);
     tuh_hid_receive_report(dev_addr, instance);
 }
 
