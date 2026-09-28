@@ -14,6 +14,7 @@ extern "C" {
 
 bool wonderswan_qspi_psram_init(void);
 bool wonderswan_qspi_psram_available(void);
+bool wonderswan_is_rp2350a(void);
 size_t wonderswan_qspi_psram_size(void);
 size_t wonderswan_qspi_rom_capacity(void);
 uintptr_t wonderswan_qspi_aux_base(void);

@@ -1840,11 +1840,15 @@ static bool game_palette_exists(void) {
 }
 
 static bool game_palette_write(void) {
-    char path[256];
+    static char path[256];
     if (!game_palette_ini_path(path, sizeof(path))) return false;
+    /* F8 fires mid-game, where the SD volume may be stale.  Force a mount first
+       (as save()/save_config() do) — otherwise the mount-less SD access can hang
+       waiting on the card, since the low-level driver has no timeout. */
+    if (f_mount(&fs, "", 1) != FR_OK) return false;
     config_mkdirs();
     if (!global_palette_valid) init_custom_palette_from_default();
-    char data[768];
+    static char data[768];
     int len = snprintf(data, sizeof(data),
         "[palette]\r\n"
         "rgb0=%06lX\r\nrgb1=%06lX\r\nrgb2=%06lX\r\nrgb3=%06lX\r\n"
@@ -2740,11 +2744,12 @@ int main() {
 #if PICO_RP2350
     if (wonderswan_qspi_psram_init())
         rom = WONDERSWAN_QSPI_PSRAM_BASE;
+    /* RP2350A shares GP19 between the QSPI CS1 and the legacy SPI SCK, so the
+       legacy PSRAM can't be brought up while QSPI PSRAM is active there.  On
+       RP2350B (CS1 on GP47) there's no clash — use the second chip for spill. */
+    if (!(wonderswan_is_rp2350a() && wonderswan_qspi_psram_available()))
 #endif
-    /* M1 may also have a separate PIO/SPI PSRAM.  Initialise it even when
-       QSPI PSRAM is present so cartridge save memory can spill there when an
-       8 MiB ROM consumes the whole QSPI device.  On other boards this is a no-op. */
-    init_psram();
+        init_psram();
 #ifdef PICO_DEFAULT_LED_PIN
     for (int i = 0; i < 6; i++) {
         sleep_ms(33);

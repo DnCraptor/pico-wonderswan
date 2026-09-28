@@ -110,10 +110,13 @@ static void __no_inline_not_in_flash_func(psram_set_timing)(uint32_t sys_hz) {
         (uint32_t)divisor << QMI_M1_TIMING_CLKDIV_LSB;
 }
 
+bool wonderswan_is_rp2350a(void) {
+    return (*((io_ro_32 *)(SYSINFO_BASE + SYSINFO_PACKAGE_SEL_OFFSET)) & 1u) != 0;
+}
+
 bool __no_inline_not_in_flash_func(wonderswan_qspi_psram_init)(void) {
     const uint32_t sys_hz = clock_get_hz(clk_sys);
-    const bool rp2350a =
-        (*((io_ro_32 *)(SYSINFO_BASE + SYSINFO_PACKAGE_SEL_OFFSET)) & 1u) != 0;
+    const bool rp2350a = wonderswan_is_rp2350a();
     const uint cs_pin = rp2350a ? PSRAM_CS1_GPIO_RP2350A : PSRAM_CS1_GPIO_RP2350B;
     psram_available = false;
     psram_size = 0;
@@ -192,5 +195,6 @@ bool wonderswan_qspi_psram_available(void) { return false; }
 size_t wonderswan_qspi_psram_size(void) { return 0; }
 size_t wonderswan_qspi_rom_capacity(void) { return 0; }
 uintptr_t wonderswan_qspi_aux_base(void) { return 0; }
+bool wonderswan_is_rp2350a(void) { return false; }
 bool wonderswan_qspi_set_aux_region(size_t offset, size_t size) { (void)offset; (void)size; return false; }
 #endif
