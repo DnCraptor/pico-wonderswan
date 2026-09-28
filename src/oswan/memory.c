@@ -33,6 +33,8 @@
 
 static uint8 *ws_rom;
 __aligned(4) uint8 internalRam[0x10000];
+static uint8_t cartSram[32 << 10];
+static bool cartSramActive;
 
 
 uint16 ws_rom_checksum;
@@ -104,7 +106,10 @@ void __not_in_flash_func(cpu_writemem20)(uint32_t addr, uint8_t value) {
            accessor masked only the 16-bit CPU offset, so carts larger than
            64 KiB could never reach banks 1..n (Dicing Knight has 256 KiB). */
         const uint32 sramAddress = ((((uint32)ws_ioRam[0xc1]) << 16) | offset) & sramAddressMask;
-        write8psram((1024 << 10) + sramAddress, value);
+        if (cartSramActive)
+            cartSram[sramAddress] = value;
+        else
+            write8psram((1024 << 10) + sramAddress, value);
     }
 //		ws_staticRam[offset&sramAddressMask]=value;
 
@@ -133,6 +138,8 @@ uint8_t __not_in_flash_func(cpu_readmem20)(uint32_t addr) {
     }
     if (bank == 1) {
         const uint32 sramAddress = ((((uint32)ws_ioRam[0xc1]) << 16) | offset) & sramAddressMask;
+        if (cartSramActive)
+            return cartSram[sramAddress];
         return read8psram((1024 << 10) + sramAddress);
     }
 
@@ -193,6 +200,9 @@ int ws_memory_init(uint8 *rom, uint32 wsRomSize) {
     const uint32 sramSize = ws_rom_sramSize(ws_rom, romSize);
     const uint32 eepromSize = ws_rom_eepromSize(ws_rom, romSize);
     cartSramSize = sramSize; cartEepromSize = eepromSize;
+    cartSramActive = sramSize != 0 && sramSize <= sizeof(cartSram);
+    if (cartSramActive)
+        memset(cartSram, 0, sramSize);
     /* Bank 1 is still a 64 KiB cartridge RAM window when the header declares
        no SRAM.  Keep that legacy/work-RAM behaviour, but do not let C1 become
        an address extension in that case: size - 1 would be 0xFFFFFFFF, so the
@@ -206,7 +216,8 @@ int ws_memory_init(uint8 *rom, uint32 wsRomSize) {
     if (ws_romHeader->minimumSupportSystem == WS_SYSTEM_COLOR)
         ws_gpu_operatingInColor = 1;
 
-    return psram_configure_cart_storage(sramSize, eepromSize, romSize, ws_rom_checksum) ? 1 : 0;
+    return psram_configure_cart_storage(sramSize, eepromSize, romSize, ws_rom_checksum,
+                                        cartSramActive) ? 1 : 0;
 }
 
 ////////////////////////////////////////////////////////////////////////////////

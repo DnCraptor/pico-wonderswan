@@ -33,3 +33,4 @@
 #define AUDIO_PWM_PIN 10
 #define AUDIO_DATA_PIN 10
 #define AUDIO_CLOCK_PIN 11
+#define START_FROM_DEMO 1 // autostart demo

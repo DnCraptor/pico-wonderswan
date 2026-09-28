@@ -1074,7 +1074,7 @@ static enum vreg_voltage selected_voltage(uint16_t mhz) {
 #if PICO_RP2350
 static void __no_inline_not_in_flash_func(set_flash_timing_for_clock)(uint32_t sys_hz) {
 #if ZERO
-    const uint32_t max_flash_hz = 66000000u;
+    const uint32_t max_flash_hz = 133 * 1000000u; // TODO: runtime configuration for FLASH/PSRAM limits
 #else
     const uint32_t max_flash_hz = 133000000u;
 #endif

@@ -149,14 +149,27 @@ static void physical_psram_write32(uint32_t addr, uint32_t value) {
 }
 
 bool psram_configure_cart_storage(uint32_t sram_size, uint32_t eeprom_size,
-                                  uint32_t rom_size, uint16_t rom_checksum) {
+                                  uint32_t rom_size, uint16_t rom_checksum,
+                                  bool sram_internal) {
     if (nvram_file_open) {
         nvram_cache_flush();
         f_close(&nvram_file);
         nvram_file_open = false;
     }
 
-    const uint32_t ram_bytes = sram_size ? sram_size : 0x10000u;
+    const uint32_t ram_bytes = sram_internal ? 0u : (sram_size ? sram_size : 0x10000u);
+
+    /* Small declared cartridge SRAM lives in RP2350 SRAM and needs no backing
+       store at all unless this cartridge also has external EEPROM. */
+    if (ram_bytes == 0 && eeprom_size == 0) {
+        cart_storage_backend = CART_STORAGE_FILE;
+        fallback_sram_size = 0;
+        fallback_eeprom_size = 0;
+        nvram_cache_loaded = false;
+        nvram_cache_dirty = false;
+        return true;
+    }
+
     uint32_t storage_span = 1u << 20; /* includes CART_IDENTITY_ADDR */
     if (eeprom_size > storage_span) storage_span = eeprom_size;
     if (ram_bytes > UINT32_MAX - (1u << 20)) return false;
