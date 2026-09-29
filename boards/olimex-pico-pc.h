@@ -32,3 +32,4 @@
 #define PSRAM_PIN_MOSI 20
 #define PSRAM_PIN_MISO 21
 #define PICO_DEFAULT_LED_PIN 25
+#define START_FROM_DEMO 1 // autostart demo
